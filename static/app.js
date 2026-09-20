@@ -552,144 +552,6 @@
     libRefresh();
   }
 
-  /* ---------------- 模型库（第四个 tab） ---------------- */
-  const modelState = { all: [], shown: [], scanned: false, dirs: [] };
-
-  function modelRow(m, i) {
-    const thumb = m.preview ? thumbBox(m.preview, 56) : '<span class="thumbbox noprev" title="没有预览图"><\/span>';
-    const trig = (m.triggers || []).slice(0, 6).map(t => '<span class="tag">' + esc(t) + '<\/span>').join(' ');
-    return '<tr data-mi="' + i + '">'
-      + '<td>' + thumb + '<\/td>'
-      + '<td class="fname" title="' + esc(m.path) + '">' + esc(m.name) + '<\/td>'
-      + '<td>' + esc(m.kind) + '<\/td>'
-      + '<td class="hint">' + (trig || '—') + '<\/td>'
-      + '<td class="mono">' + fmtBytes(m.bytes) + '<\/td>'
-      + '<\/tr>';
-  }
-
-  function renderModels() {
-    const tb = $('#model-tbody');
-    if (!tb) return;
-    const q = ($('#model-q').value || '').trim().toLowerCase();
-    const kind = $('#model-kind').value;
-    const onlyTrig = $('#model-only-trig').checked;
-    modelState.shown = modelState.all.filter(m => {
-      if (kind && String(m.kind || '').toLowerCase().indexOf(kind.toLowerCase()) < 0) return false;
-      if (onlyTrig && !(m.triggers || []).length) return false;
-      if (q) {
-        const blob = [m.name, m.dir, m.base_model || '', (m.triggers || []).join(' ')].join(' ').toLowerCase();
-        if (blob.indexOf(q) < 0) return false;
-      }
-      return true;
-    });
-    tb.innerHTML = modelState.all.length
-      ? (modelState.shown.length
-        ? modelState.shown.map(modelRow).join('')
-        : '<tr><td colspan="5" class="empty">没有符合条件的模型</td></tr>')
-      : '<tr><td colspan="5" class="empty">填目录后点「扫描模型」</td></tr>';
-  }
-
-  function modelSummary() {
-    const el = $('#model-summary');
-    if (!el) return;
-    const s = modelState.summary || {};
-    el.classList.remove('bad', 'warn');
-    if (!s.total) { el.textContent = '还没有扫描'; return; }
-    const kinds = (s.kinds || []).map(k => k.kind + ' ' + k.n).join(' / ');
-    const bases = (s.bases || []).slice(0, 3).map(b => b.base + ' ' + b.n).join(' / ');
-    el.innerHTML = '共 <b>' + s.total + '</b> 个模型 · ' + fmtBytes(s.bytes) + ' · ' + kinds
-      + ' · 没有触发词的 ' + s.no_trigger + ' 个' + (bases ? ' · 底模：' + esc(bases) : '');
-  }
-
-  async function modelScan() {
-    const dir = $('#model-dir').value.trim();
-    if (!dir) {
-      $('#model-dir').focus();
-      $('#model-dir').classList.add('need');
-      setTimeout(() => $('#model-dir').classList.remove('need'), 1800);
-      return toast('先填一个模型目录（点「开启目录」可以从已记住的目录里选）', 4200);
-    }
-    $('#btn-model-scan').disabled = true;
-    $('#model-summary').textContent = '正在扫描 ' + dir + ' …（只读文件头，几 GB 也一样快）';
-    try {
-      const r = await api('/api/models/scan', { method: 'POST', body: { dir: dir, recursive: $('#model-rec').checked } });
-      if (!r.ok) throw new Error(r.error || '扫描失败');
-      modelState.all = r.models || [];
-      modelState.summary = r.summary || {};
-      modelState.scanned = true;
-      modelState.dirs = r.roots || [];
-      $('#model-summary').textContent = '';
-      modelSummary();
-      renderModels();
-      toast('扫描完成：' + r.count + ' 个模型' + (r.errors && r.errors.length ? '（' + r.errors.join('；') + '）' : ''), 4200);
-    } catch (e) {
-      $('#model-summary').textContent = '';
-      $('#model-summary').classList.add('bad');
-      $('#model-summary').textContent = '扫描失败：' + (e.message || '');
-      suggestDirs('#model-dir', '#model-dir-help', dir);
-    } finally { $('#btn-model-scan').disabled = false; }
-  }
-
-  async function modelDetail(i) {
-    const m = modelState.shown[i];
-    if (!m) return;
-    $('#model-detail-title').textContent = '模型详情 · ' + m.name;
-    const img = $('#model-big');
-    if (m.preview) {
-      img.onerror = () => { img.onerror = null; img.removeAttribute('src'); };
-      img.src = '/api/thumb?w=768&path=' + encodeURIComponent(m.preview);
-      const op = $('#model-open-file');
-      op.href = '/api/file?path=' + encodeURIComponent(m.preview) + '&dl=1';
-      op.style.display = '';
-    } else {
-      img.removeAttribute('src');
-      $('#model-open-file').style.display = 'none';
-    }
-    $('#model-big-info').textContent = m.name + ' · ' + fmtBytes(m.bytes) + ' · ' + m.kind
-      + (m.base_model ? ' · ' + m.base_model : '') + (m.preview ? '' : ' · 没有预览图');
-    const panel = $('#model-panel');
-    panel.innerHTML = '<div class="hint">正在读元数据…</div>';
-    try {
-      const r = await api('/api/models/detail?path=' + encodeURIComponent(m.path));
-      const d = r.model || {};
-      const trig = (d.triggers || []).map(t => '<span class="tag">' + esc(t) + '</span>').join(' ');
-      const labels = Object.entries(d.labels || {}).map(([k, v]) =>
-        '<tr><td>' + esc(k) + '</td><td class="mono">' + esc(String(v).slice(0, 200)) + '</td></tr>').join('');
-      panel.innerHTML = ''
-        + '<div class="meta-file"><b>' + esc(d.name || m.name) + '</b> · ' + esc(d.kind || '') + ' · '
-        + fmtBytes(d.bytes || 0) + (d.meta_error ? ' · <span class="warn">' + esc(d.meta_error) + '</span>' : '') + '</div>'
-        + '<div class="meta-sec"><h4>触发词（' + (d.triggers || []).length + '）</h4>'
-        + (trig ? '<div class="meta-kv">' + trig + '</div>' : '<div class="hint ph">（这个模型没写触发词）</div>') + '</div>'
-        + '<div class="meta-sec"><h4>训练 / 元数据</h4>'
-        + (labels ? '<table class="tbl mini">' + labels + '</table>' : '<div class="hint ph">（没有 kohya / civitai 元数据）</div>')
-        + '</div>'
-        + '<div class="meta-sec"><h4>路径</h4><div class="hint mono">' + esc(d.path || m.path) + '</div></div>'
-        + '<details class="meta-raw"><summary>原始元数据（全部键值）</summary><pre class="out">'
-        + esc(JSON.stringify(d.metadata || {}, null, 1).slice(0, 20000)) + '</pre></details>';
-      modelState.current = d;
-    } catch (e) {
-      panel.innerHTML = '<div class="hint bad">读元数据失败：' + esc(e.message) + '</div>';
-      modelState.current = null;
-    }
-  }
-
-  async function modelLoadDirs() {
-    try {
-      const r = await api('/api/models');
-      modelState.dirs = r.dirs || [];
-      if (modelState.dirs.length) {
-        $('#model-dir').value = modelState.dirs[0];
-        $('#model-dir-help').hidden = false;
-        $('#model-dir-help').innerHTML = '<div class="hint" style="margin-bottom:6px">已记住的模型目录（点一下换）：</div><div class="chips">'
-          + modelState.dirs.map(d => '<button class="chip" data-dir="' + esc(d) + '">📁 ' + esc(d) + '</button>').join('') + '</div>';
-        $('#model-dir-help').querySelectorAll('.chip').forEach(b => {
-          b.onclick = () => { $('#model-dir').value = b.dataset.dir; };
-        });
-        if (!modelState.scanned) modelScan();      // 进了这个 tab 就自动扫一次
-      }
-    } catch (e) { /* 没配过就算了 */ }
-  }
-
   // 缩略图：上传缓存被清理后，列表里引用的老路径会 404 —— 别显示裂图，给个占位
   function thumbBox(path, w) {
     return '<span class="thumbbox"><img class="thumb" loading="lazy" alt="" data-thumb="1" src="/api/thumb?w=' + w
@@ -901,7 +763,7 @@
   }
 
   /* ---------------- 顶栏 tab 切换 ---------------- */
-  const VIEWS = ['compress', 'meta', 'classify', 'models'];
+  const VIEWS = ['compress', 'meta', 'classify'];
   function switchView(v) {
     const target = VIEWS.includes(v) ? v : 'compress';
     VIEWS.forEach(k => { const el = $('#view-' + k); if (el) el.hidden = (k !== target); });
@@ -1261,33 +1123,7 @@
     $('#btn-lib-search').onclick = libSearch;
     $('#btn-lib-exit').onclick = libExitSearch;
     $('#lib-q').addEventListener('keydown', e => { if (e.key === 'Enter') libSearch(); });
-    // 模型库 tab
-    $('#btn-model-scan').onclick = modelScan;
-    $('#model-dir').addEventListener('keydown', e => { if (e.key === 'Enter') modelScan(); });
-    $('#model-tbody').onclick = e => {
-      const tr = e.target.closest('tr'); if (!tr || tr.dataset.mi === undefined) return;
-      modelDetail(+tr.dataset.mi);
-    };
-    ['#model-q', '#model-kind'].forEach(sel => { const el = $(sel); if (el) el.oninput = el.onchange = renderModels; });
-    $('#model-only-trig').onchange = renderModels;
-    $('#model-copy-trig').onclick = () => {
-      const d = modelState.current || {};
-      const t = (d.triggers || []).join(', ');
-      if (!t) return toast('这个模型没有触发词');
-      copyText(t, '触发词（' + (d.triggers || []).length + ' 个）');
-    };
-    $('#model-detail-close').onclick = () => {
-      $('#model-detail-title').textContent = '模型详情';
-      $('#model-big').removeAttribute('src');
-      $('#model-panel').innerHTML = '<div class="hint" style="padding:12px">左边点一行 → 这里显示触发词 / 底模 / 训练信息 / 原始元数据</div>';
-      modelState.current = null;
-    };
-    $('#btn-model-open').onclick = async () => {
-      const d = ($('#model-dir').value || '').trim() || (modelState.dirs[0] || '');
-      if (!d) return toast('还没有目录');
-      try { await api('/api/reveal', { method: 'POST', body: { path: d } }); } catch (e) { toast('打不开：' + e.message); }
-    };
-    modelLoadDirs();
+
     try {                                   // 上次读过的目录填回去，「读取该目录」随时有东西可执行
       const last = localStorage.getItem('is_meta_dir');
       if (last && !$('#meta-scan-dir').value) { $('#meta-scan-dir').value = last; metaState.lastDir = last; }

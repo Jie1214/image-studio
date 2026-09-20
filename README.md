@@ -170,20 +170,7 @@ image-studio/
 └─ output/             默认输出目录
 ```
 
-## 十一、模型库（第四 tab）
-读 **safetensors 头部元数据**（只读文件头，几 GB 的模型也是毫秒级，权重一个字节都不读）：
-
-- **触发词**：优先 `ss_trained_words` / civitai 的 `activation text`；没有就从 kohya 写的 `ss_tag_frequency`（每个标签出现次数）里按词频取前若干个 → 「这个 LoRA 该写什么词」直接给答案，一键复制。
-- **底模 / 训练信息**：`ss_base_model_version`、`modelspec.architecture`、`ss_network_dim/alpha`、训练图片数 / 轮数 / 步数 / 分辨率 / 优化器、标题 / 作者 / 许可。
-- **预览图**：自动找 `同名.png` / `同名.preview.png` 等约定；没有就显示「无预览」占位。
-- **类型识别**：按所在目录名判（`loras`→LoRA、`checkpoints`→Checkpoint、`vae`、`controlnet`、`text_encoders`、`upscale_models`、`unet`/`diffusion_models`…）。
-- **检索**：按模型名 / 触发词 / 底模搜，按类型过滤，勾「只看有触发词的」；状态行给「共 N 个 · 体积 · 类型分布 · 没有触发词的 M 个 · 底模分布」。
-
-模型目录**在界面里填**（填完自动记进 `config.json` 的 `model_dirs`；代码里不写死任何路径），这些目录同时会被加进「可读取白名单」，预览图才不会被 403 挡住。
-
-回归测试：`.venv/Scripts/python.exe tests/test_models.py`（自己造合法的 safetensors 头部做样本）。
-
-## 十二、常见问题
+## 十一、常见问题
 
 - **压完反而更大？** 勾着「不比原图小就保留原文件」，表格里会显示「已保留原文件」。想强制重编码就取消勾选。
 - **线条图/截图转 WebP 变大了？** 正常现象：这类图 PNG 已经很小，WebP 的低频压缩反而不划算。表格里会标一个黄色「变大了」标签 —— 这种图保持原格式（PNG）或者把 PNG 调色板量化调到 256 色更合适。

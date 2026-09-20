@@ -19,7 +19,6 @@
   <button class="tab active" data-view="compress">🖼️ 批量压缩</button>
   <button class="tab" data-view="meta">🔍 读图参数</button>
   <button class="tab" data-view="classify">🗂️ 一键分类</button>
-  <button class="tab" data-view="models">🧩 模型库</button>
 </nav>
 
 <main>
@@ -390,78 +389,6 @@
   </div><!-- /split -->
 </div><!-- /view-classify -->
 
-<div id="view-models" class="view" hidden>
-  <div class="split">
-  <div class="split-left">
-  <section class="card">
-    <div class="card-head">
-      <span class="ttl">模型 / LoRA 来源</span>
-      <span class="hint">读 safetensors 头部元数据（只读文件头，几 GB 的模型也是毫秒级）</span>
-      <span class="spacer"></span>
-      <button class="btn" id="btn-model-open">📁 打开目录</button>
-    </div>
-    <div class="row">
-      <input class="input grow" id="model-dir" placeholder="模型目录，例如 E:\AI\ComfyUI\ComfyUI\models（填完点「扫描」会记住）">
-      <label class="chk"><input type="checkbox" id="model-rec" checked> 含子文件夹</label>
-      <button class="btn primary" id="btn-model-scan">🧩 扫描模型</button>
-    </div>
-    <div class="dirhelp" id="model-dir-help" hidden></div>
-    <div class="summary" id="model-summary">还没有扫描</div>
-  </section>
-
-  <section class="card">
-    <div class="card-head">
-      <span class="ttl">模型列表</span>
-      <span class="hint">点一行看完整元数据（触发词 / 底模 / 训练信息）</span>
-      <span class="spacer"></span>
-      <input class="input" id="model-q" style="width:230px" placeholder="搜模型名 / 触发词 / 底模">
-      <select class="input" id="model-kind" style="width:auto">
-        <option value="">全部类型</option>
-        <option value="LoRA">LoRA</option>
-        <option value="Checkpoint">Checkpoint</option>
-        <option value="UNet">UNet / 扩散模型</option>
-        <option value="VAE">VAE</option>
-        <option value="ControlNet">ControlNet</option>
-        <option value="Text Encoder">Text Encoder</option>
-        <option value="放大模型">放大模型</option>
-      </select>
-      <label class="chk"><input type="checkbox" id="model-only-trig"> 只看有触发词的</label>
-    </div>
-    <div class="table-wrap">
-      <table class="tbl slim">
-        <colgroup><col style="width:64px"><col style="width:250px"><col style="width:96px"><col><col style="width:96px"></colgroup>
-        <thead>
-          <tr><th>预览</th><th>名称</th><th>类型</th><th>触发词</th><th>大小</th></tr>
-        </thead>
-        <tbody id="model-tbody">
-          <tr><td colspan="5" class="empty">填目录后点「扫描模型」</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-  </div><!-- /split-left -->
-
-  <div class="split-right">
-    <section class="card" id="model-detail-card">
-      <div class="card-head">
-        <span class="ttl" id="model-detail-title">模型详情</span>
-        <span class="spacer"></span>
-        <button class="btn sm" id="model-copy-trig">复制触发词</button>
-        <button class="btn ghost sm" id="model-detail-close">清除</button>
-      </div>
-      <div class="meta-stack">
-        <div class="bigwrap"><img id="model-big" alt=""></div>
-        <div class="bigbar">
-          <span class="hint mono" id="model-big-info">点左边一行看预览图与元数据</span>
-          <span class="spacer"></span>
-          <a class="btn sm" id="model-open-file" target="_blank">打开预览图</a>
-        </div>
-        <div class="meta-right" id="model-panel"><div class="hint" style="padding:12px">左边点一行 → 这里显示触发词 / 底模 / 训练信息 / 原始元数据</div></div>
-      </div>
-    </section>
-  </div><!-- /split-right -->
-  </div><!-- /split -->
-</div><!-- /view-models -->
 </main>
 
 <!-- 对比弹窗 -->
