@@ -51,6 +51,22 @@ COND_PASS = {
 }
 TEXT_KEYS = ("text", "text_g", "text_l", "string", "prompt", "positive_prompt", "value", "prompt_text")
 SAMPLERS = {"KSampler", "KSamplerAdvanced", "SamplerCustom", "SamplerCustomAdvanced", "KSamplerSelect"}
+# 采样器识别用的输入名（不认类名，认接线：自定义/改名的采样节点也能认出来）
+SAMPLER_PARAM_KEYS = ("seed", "noise_seed", "steps", "cfg", "sampler_name", "scheduler", "denoise", "eta")
+MODEL_EXTS = (".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".png", ".jpg", ".jpeg", ".webp", ".onnx", ".gguf")
+
+
+def _sampler_like(ct: str, ins: Dict[str, Any]) -> bool:
+    """是不是采样节点：按「有没有 positive/negative 接线 + 采样参数」判断，而不是认类名。
+
+    KSampler_A1111 / SamplerCustom 改名版 / 带前缀的自定义采样器都能命中；
+    ControlNetApply 这类只有 positive/negative 没有 seed/steps 的透传节点不会被误认。
+    """
+    if ct in SAMPLERS:
+        return True
+    if _is_link(ins.get("positive")) and _is_link(ins.get("negative")):
+        return any(k in ins for k in ("seed", "noise_seed", "steps", "cfg", "sampler_name", "scheduler"))
+    return False
 
 
 def _is_link(v: Any) -> bool:
@@ -253,10 +269,16 @@ def _follow_text(nodes: Dict[str, Any], node_id: str, slot: Optional[int] = None
             return [t for t in texts if t]
 
     texts = []
-    if ct.startswith("CLIPTextEncode") or ct in ("BNK_CLIPTextEncodeAdvanced",):
+    # 认不出的透传节点（InpaintModelConditioning / 自定义 Conditioning 包装）：按惯例 输出槽 0=positive、1=negative
+    if slot is not None and ct not in OUT_SLOT_INPUT and _is_link(ins.get("positive")) and _is_link(ins.get("negative")):
+        _k = "positive" if slot == 0 else ("negative" if slot == 1 else None)
+        if _k and _is_link(ins.get(_k)):
+            return _follow_text(nodes, str(ins[_k][0]), int(ins[_k][1]), depth + 1, seen)
+    if (ct.startswith("CLIPTextEncode") or "CLIPTextEncode" in ct or ct in ("BNK_CLIPTextEncodeAdvanced",)
+            or any(isinstance(ins.get(_t), str) and ins.get(_t, "").strip() for _t in TEXT_KEYS)):
         for k in TEXT_KEYS:
             v = ins.get(k)
-            if isinstance(v, str) and v.strip():
+            if isinstance(v, str) and v.strip() and "lora" not in ct.lower() and not v.lower().endswith(MODEL_EXTS):
                 texts.append(v.strip())
                 break
         return [t for t in texts if t]
@@ -317,9 +339,9 @@ def parse_comfy(prompt_json: str) -> Dict[str, Any]:
     negative: List[str] = []
     for nid, node in nodes.items():
         ct = node.get("class_type", "")
-        if ct not in SAMPLERS:
-            continue
         ins = node.get("inputs", {}) or {}
+        if not _sampler_like(ct, ins):
+            continue
         if not sampler:
             for k_in, k_out in (("seed", "seed"), ("noise_seed", "seed"), ("steps", "steps"), ("cfg", "cfg"),
                                 ("sampler_name", "sampler_name"), ("scheduler", "scheduler"), ("denoise", "denoise")):
@@ -329,16 +351,51 @@ def parse_comfy(prompt_json: str) -> Dict[str, Any]:
             positive += _follow_text(nodes, str(ins["positive"][0]), int(ins["positive"][1]))
         if _is_link(ins.get("negative")):
             negative += _follow_text(nodes, str(ins["negative"][0]), int(ins["negative"][1]))
-    # 尺寸
-    for nid, node in nodes.items():
-        if node.get("class_type", "").startswith("EmptyLatent") or node.get("class_type") in (
-                "EmptySD3LatentImage", "EmptyLatentImagePresets", "EmptyImage"):
+    # 兜底 1：没接出正向提示词时（例如正向被 ConditioningZeroOut 抹掉），直接找文本编码节点，别让图里的提示词白丢
+    if not positive:
+        for nid, node in nodes.items():
+            ct = node.get("class_type", "")
+            if "lora" in ct.lower():
+                continue
             ins = node.get("inputs", {}) or {}
-            if ins.get("width") and ins.get("height"):
-                sampler.setdefault("width", ins.get("width"))
-                sampler.setdefault("height", ins.get("height"))
-                if ins.get("batch_size") and ins["batch_size"] != 1:
-                    sampler["batch_size"] = ins["batch_size"]
+            if not (ct.startswith("CLIPTextEncode") or "CLIPTextEncode" in ct or "textencode" in ct.lower()):
+                continue
+            for k in TEXT_KEYS:
+                v = ins.get(k)
+                if isinstance(v, str) and v.strip() and not v.lower().endswith(MODEL_EXTS) and v.strip() not in negative:
+                    positive.append(v.strip())
+                    break
+    # 兜底 2：种子可能不在采样节点上（rgthree 的 Seed / SetSubseeds 这类独立种子节点）
+    if "seed" not in sampler:
+        for nid, node in nodes.items():
+            ins = node.get("inputs", {}) or {}
+            v = ins.get("seed", ins.get("noise_seed"))
+            if isinstance(v, int):
+                sampler["seed"] = v
+                break
+    # 尺寸：只认真正的数字（宽度来自节点链接时不能把 ["82",0] 这种链接写进参数）
+    def _sz(ins: Dict[str, Any]):
+        w, h = ins.get("width"), ins.get("height")
+        if isinstance(w, int) and isinstance(h, int) and w and h:
+            return w, h, ins.get("batch_size")
+        return None
+    for nid, node in nodes.items():
+        ct = node.get("class_type", "")
+        if ct.startswith("EmptyLatent") or ct in ("EmptySD3LatentImage", "EmptyLatentImagePresets", "EmptyImage"):
+            got = _sz(node.get("inputs", {}) or {})
+            if got:
+                sampler.setdefault("width", got[0]); sampler.setdefault("height", got[1])
+                if got[2] and got[2] != 1:
+                    sampler["batch_size"] = got[2]
+                break
+    if "width" not in sampler:                       # 分辨率来自 TTResolutionSelector / 自定义尺寸节点
+        for nid, node in nodes.items():
+            ct = node.get("class_type", "")
+            if not any(t in ct for t in ("Resolution", "Size", "Wh", "WH", "Aspect")):
+                continue
+            got = _sz(node.get("inputs", {}) or {})
+            if got:
+                sampler.setdefault("width", got[0]); sampler.setdefault("height", got[1])
                 break
 
     def _dedup(seq: List[str]) -> List[str]:

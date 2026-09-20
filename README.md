@@ -178,3 +178,10 @@ image-studio/
 - **透明背景变白？** 输出 JPEG/BMP 不支持透明通道，会统一垫白底（不会变黑）。
 - **AVIF 很慢？** 正常，同画质它最小。批量时把并行线程调到 8 会快很多。
 - **想压视频/PDF？** 这个工具只管图片；视频可以另开一个功能模块（说一声就加）。
+
+### 解析规则（为什么有些图读不到参数）
+- **采样器按接线认，不按节点名认**：任何同时接了 positive / negative 且带 seed / steps / cfg / sampler_name 的节点都算采样器 —— 所以 `KSampler_A1111`、改名版、第三方包的采样节点都能读出来（曾经只认 `KSampler` 系列类名，导致这类图的提示词整片空着）。
+- **提示词按 conditioning 链回溯**：顺着正/负链找到文本编码节点（`CLIPTextEncode` / `BNK_CLIPTextEncodeAdvanced` / 任何带 `text` 输入的自定义节点）；认不出的透传节点按惯例「输出槽 0=正向、1=负向」走，不会正负串味。
+- **正向被 `ConditioningZeroOut` 抹掉时**，会退回去把图里文本编码节点的文字捞出来，而不是显示「没有正向提示词」。
+- **尺寸**只取真正的数字（来自 `TTResolutionSelector` 这类链接的也认）；种子在独立节点（`Seed (rgthree)`）上也能认。
+- 回归测试：`.venv/Scripts/python.exe tests/test_parse_comfy.py`（5 个用例，覆盖上面每一条）。
