@@ -270,6 +270,10 @@ def _follow_text(nodes: Dict[str, Any], node_id: str, slot: Optional[int] = None
     ct = node.get("class_type", "")
     ins = node.get("inputs", {}) or {}
 
+    # ConditioningZeroOut / 同类"清空"节点：这一侧压根没有提示词，别再顺着链把上游文本捞过来
+    if re.search(r"zero\s*out|zeroconditioning|conditioningzero", ct, re.I):
+        return []
+
     # 已知槽位映射的透传节点：只跟着对应的那条链走
     if slot is not None and ct in OUT_SLOT_INPUT:
         mapped = OUT_SLOT_INPUT[ct].get(slot)

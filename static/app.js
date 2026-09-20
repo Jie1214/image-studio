@@ -348,18 +348,28 @@
     const size = (f.w && f.h) ? ((f.w || 0) + '×' + (f.h || 0)) : '—';
     if (f.busy) {
       return '<tr data-i="' + i + '"><td>' + thumb + '</td><td class="fname">' + esc(f.name) + '</td>'
-        + '<td class="mono">' + size + '</td><td class="hint">解析中…</td><td class="fill"></td></tr>';
+        + '<td class="mono">' + size + '</td><td class="hint">…</td><td class="mono">' + fmtBytes(f.bytes)
+        + '</td><td class="hint">解析中</td><td class="fill"></td></tr>';
     }
     if (!m) {
       return '<tr data-i="' + i + '"><td>' + thumb + '</td><td class="fname">' + esc(f.name) + '</td>'
-        + '<td class="mono">' + size + '</td><td class="bad">未解析</td><td class="fill"></td></tr>';
+        + '<td class="mono">' + size + '</td><td class="hint">…</td><td class="mono">' + fmtBytes(f.bytes)
+        + '</td><td class="bad">未解析</td><td class="fill"></td></tr>';
     }
     // 只要解析过就给「详情」按钮；没读到参数时右边只出图 + 占位文案
     const act = '<button class="btn sm" data-act="meta-detail">详情</button>';
+    // 有没有 ComfyUI 生成信息：有=绿✓ / 有其他工具的生成信息=黄「其他」/ 纯图=灰 —
+    const tool = String(m.tool || '');
+    const comfy = (m.ok && /^ComfyUI/i.test(tool))
+      ? '<span class="good" title="' + esc(tool) + '">✓ 有</span>'
+      : (m.ok ? '<span class="warn" title="' + esc(tool) + '">其他</span>'
+        : '<span class="dash" title="没有读到生成信息">—</span>');
     return '<tr data-i="' + i + '">'
       + '<td>' + thumb + '</td>'
       + '<td class="fname" title="' + esc(f.path) + '">' + esc(f.name) + '</td>'
       + '<td class="mono">' + size + '</td>'
+      + '<td>' + comfy + '</td>'
+      + '<td class="mono">' + fmtBytes(f.bytes) + '</td>'
       + '<td>' + act + '</td>'
       + '<td class="fill"></td>'
       + '</tr>';
@@ -368,7 +378,7 @@
   function renderMetaTable() {
     const tb = $('#meta-tbody');
     if (!metaState.files.length) {
-      tb.innerHTML = '<tr><td colspan="5" class="empty">列表为空：拖入图片 / 选文件夹 / 填目录后点「读取该目录」</td></tr>';
+      tb.innerHTML = '<tr><td colspan="7" class="empty">列表为空：拖入图片 / 选文件夹 / 填目录后点「读取该目录」</td></tr>';
     } else {
       tb.innerHTML = metaState.files.map((f, i) => metaRowItem(f, i)).join('');
     }
@@ -457,7 +467,8 @@
   }
 
   function bigInfo(it) {
-    return [it.name, (it.w ? it.w + '×' + it.h : ''), fmtBytes(it.bytes || 0), it.format || '', it.dir || '']
+    return [it.name, (it.w ? it.w + '×' + it.h : ''), fmtBytes(it.bytes || 0), it.format || '',
+            (it.meta && it.meta.ok ? (it.meta.tool || '有') : ''), it.dir || '']
       .filter(Boolean).join(' · ');
   }
 

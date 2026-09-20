@@ -168,6 +168,24 @@ def test_text_through_showanything_and_switch():
     print("  ✓ 文本经 easy showAnything / String Literal 转进来也能读到")
 
 
+def test_zero_out_side_has_no_prompt():
+    """负向走 ConditioningZeroOut（Krea2 那种「不要负向」的接法）：负向要空，不能把正向文本抄过来。"""
+    r = g({
+        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "Krea2-turbo-Ink_Jade.safetensors"}},
+        "7": {"class_type": "CR Text", "inputs": {"text": "A multi-view character turnaround layout, white background"}},
+        "2": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 1], "text": ["7", 0]}},
+        "3": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["2", 0]}},
+        "5": {"class_type": "KSampler", "inputs": {
+            "model": ["1", 0], "positive": ["2", 0], "negative": ["3", 0], "latent_image": ["6", 0],
+            "seed": 596033570655159, "steps": 8, "cfg": 1.0, "sampler_name": "euler",
+            "scheduler": "simple", "denoise": 1.0}},
+        "6": {"class_type": "EmptyLatentImage", "inputs": {"width": 1920, "height": 1080, "batch_size": 1}},
+    })
+    assert "character turnaround" in r["positive"], r["positive"]
+    assert r["negative"] == "", "负向被 zero-out，不该出现正向的文本：%r" % r["negative"]
+    print("  ✓ 负向走 ConditioningZeroOut 时留空（不会把正向抄到负向）")
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     print("跑 %d 个解析回归用例：" % len(tests))
