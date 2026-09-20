@@ -121,6 +121,10 @@ class Handler(BaseHTTPRequestHandler):
                 name = urllib.parse.quote(Path(z).name)
                 return self._send(200, data, "application/zip",
                                   {"Content-Disposition": "attachment; filename*=UTF-8''%s" % name})
+            if path == "/api/cache":
+                # 上传缓存多大、几批、什么时候的（浏览器上传的副本都在 work/uploads）
+                from .cache import cache_info
+                return self._json(cache_info())
             if path == "/api/stats":
                 cfg = load_config()
                 od = output_dir()
@@ -222,6 +226,15 @@ class Handler(BaseHTTPRequestHandler):
                     save_config({"input_roots": roots})
                     return self._json({"ok": True, "added": True, "roots": roots})
                 return self._json({"ok": True, "added": False, "roots": roots})
+            if path == "/api/cache":
+                # 上传缓存多大、几批、什么时候的（浏览器上传的副本都在 work/uploads）
+                from .cache import cache_info
+                return self._json(cache_info())
+            if path == "/api/cache/clear":
+                from .cache import prune
+                b = self._json_body()
+                what = (b.get("what") or "old").strip()          # old=按时间规则清 / all=只留最新一批
+                return self._json(prune(all_=(what == "all")))
             if path == "/api/list_dirs":
                 # 目录填错了怎么办：把「这一层/上一层真实存在的文件夹」列出来让用户点，不用手打路径
                 b = self._json_body()

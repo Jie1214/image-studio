@@ -24,6 +24,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "input_roots": [],
     # 压缩结果输出目录；留空则用 <项目>/output
     "output_dir": "",
+    # 上传缓存（浏览器拖/选进来的图会先复制一份到 work/uploads）：自动清理策略
+    "upload_keep_hours": 24,        # 超过这个小时数的批次，启动时自动删
+    "upload_max_gb": 5,             # 上传缓存总大小上限，超了从最旧的批次开始删
     "exts": ["jpg", "jpeg", "png", "webp", "avif", "bmp", "tif", "tiff", "gif"],
     "defaults": {
         "format": "keep",          # keep | JPEG | PNG | WEBP | AVIF

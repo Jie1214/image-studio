@@ -626,6 +626,7 @@
       } catch (e) { toast('导入失败：' + e.message, 4200); }
     }
     await parseMetaBatch(paths);
+    refreshCache();                     // 刚复制了一批到上传缓存，刷新占用显示
   }
 
   /* ---------------- 设置 ---------------- */
@@ -752,6 +753,39 @@
     } catch (e) {
       box.innerHTML = '<span class="hint">' + esc(e.message || '读不到这个目录') + '</span>';
     }
+  }
+
+  // 上传缓存：浏览器拖/选进来的图会复制一份到 work/uploads，这里显示占用并给出清理入口
+  async function refreshCache() {
+    const box = $('#meta-cache');
+    if (!box) return;
+    try {
+      const c = await api('/api/cache');
+      const u = c.uploads || {};
+      box.hidden = false;
+      if (!u.batches) {
+        box.innerHTML = '<span class="hint">上传缓存：空（用「读取该目录」不占缓存；只有浏览器拖/选进来才会复制一份到 work\\uploads）</span>';
+        return;
+      }
+      box.innerHTML = '<span class="hint">浏览器上传的副本：<b>' + u.batches + '</b> 批 · <b>' + fmtBytes(u.bytes)
+        + '</b>（' + esc(u.newest || '') + ' 起）· 原件不受影响</span>'
+        + '<span class="spacer"></span>'
+        + '<button class="btn sm" id="cache-clear-old">清理 ' + (c.keep_hours || 24) + ' 小时前的</button>'
+        + '<button class="btn sm" id="cache-clear-all">只留最新一批</button>';
+      $('#cache-clear-old').onclick = () => cacheClear('old');
+      $('#cache-clear-all').onclick = () => cacheClear('all');
+    } catch (e) {
+      box.hidden = true;
+    }
+  }
+
+  async function cacheClear(what) {
+    try {
+      const r = await api('/api/cache/clear', { method: 'POST', body: { what: what } });
+      toast('已清理 ' + ((r.removed || []).length) + ' 批，释放 ' + fmtBytes(r.freed_bytes || 0)
+        + '（现占 ' + fmtBytes((r.uploads || {}).bytes || 0) + '）', 4200);
+    } catch (e) { toast('清理失败：' + e.message, 4200); }
+    refreshCache();
   }
 
   async function ensureDirAllowed(dir) {
@@ -974,6 +1008,7 @@
     // 顶栏 tab
     $$('#tabs .tab').forEach(b => { b.onclick = () => switchView(b.dataset.view); });
     renderMetaTable();
+    refreshCache();
     try {                                   // 上次读过的目录填回去，「读取该目录」随时有东西可执行
       const last = localStorage.getItem('is_meta_dir');
       if (last && !$('#meta-scan-dir').value) { $('#meta-scan-dir').value = last; metaState.lastDir = last; }

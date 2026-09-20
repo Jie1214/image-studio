@@ -24,6 +24,18 @@ from app import ensure_config_file, load_config, output_dir   # noqa: E402
 from app.server import serve                                   # noqa: E402
 
 
+def _human(n) -> str:
+    try:
+        n = float(n or 0)
+    except (TypeError, ValueError):
+        return "-"
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return ("%.0f %s" % (n, unit)) if unit in ("B", "KB") else ("%.1f %s" % (n, unit))
+        n /= 1024
+    return "-"
+
+
 def is_our_instance(host: str, port: int) -> bool:
     try:
         with urllib.request.urlopen("http://%s:%d/api/stats" % (host, port), timeout=2) as r:
@@ -98,6 +110,20 @@ def main() -> int:
     print("=" * 52)
     print("  图像工坊 · 批量压缩 → %s" % url)
     print("  输出目录：%s" % output_dir())
+    # 上传缓存自动腾地方：浏览器拖/选进来的图会复制一份到 work/uploads，不清理会一直涨
+    try:
+        from app.cache import auto_prune
+        c = auto_prune()
+        u = (c or {}).get("uploads") or {}
+        freed = (c or {}).get("freed_bytes") or 0
+        line = "  上传缓存：%d 批 / %s" % (u.get("batches", 0), _human(u.get("bytes", 0)))
+        if freed:
+            line += "（刚清理 %d 批，释放 %s）" % (len((c or {}).get("removed") or []), _human(freed))
+        print(line)
+        print("  保留策略：超过 %s 小时的批次、或总量超 %s GB 会自动删（config.json 可调）"
+              % ((c or {}).get("keep_hours"), (c or {}).get("max_gb")))
+    except Exception as exc:      # noqa: BLE001
+        print("  [警告] 上传缓存清理失败（不影响使用）：%s" % exc)
     print("  关闭这个窗口即停止服务")
     print("=" * 52)
     if not args.no_browser:

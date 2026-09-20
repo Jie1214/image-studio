@@ -93,6 +93,8 @@ input.need{border-color:var(--err) !important;animation:need .5s 3}
 @keyframes need{0%,100%{box-shadow:0 0 0 0 rgba(224,106,106,0)}50%{box-shadow:0 0 0 4px rgba(224,106,106,.35)}}
 /* 目录填错时的自助提示：列出这一层真实存在的文件夹 */
 .dirhelp{margin:8px 0 2px;padding:8px 10px;border:1px dashed var(--line);border-radius:10px;background:#191921}
+.cacheline{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0 2px;padding:7px 10px;
+  border:1px solid var(--line);border-radius:10px;background:#191921}
 .chips{display:flex;flex-wrap:wrap;gap:6px;max-height:132px;overflow:auto}
 .chip{border:1px solid var(--line);background:#1e1e27;color:var(--fg);border-radius:8px;padding:3px 9px;
   font:inherit;font-size:12.5px;cursor:pointer}
