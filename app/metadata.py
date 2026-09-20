@@ -70,6 +70,13 @@ STRING_SOURCE_RE = re.compile(r"(string|text|show|switch|primitive|wildcard|prom
 # 采样器识别用的输入名（不认类名，认接线：自定义/改名的采样节点也能认出来）
 SAMPLER_PARAM_KEYS = ("seed", "noise_seed", "steps", "cfg", "sampler_name", "scheduler", "denoise", "eta")
 MODEL_EXTS = (".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".png", ".jpg", ".jpeg", ".webp", ".onnx", ".gguf")
+# 容器 info 里**不是**生成参数的技术键，取 tEXt 时跳过；其余键一律收（SwarmUI/InvokeAI 的键名各不相同）
+NON_TEXT_INFO = {
+    "exif", "xmp", "icc_profile", "transparency", "gamma", "dpi", "duration", "loop", "jfif", "jfif_version",
+    "jfif_unit", "jfif_density", "adobe", "adobe_transform", "photoshop", "progression", "mp", "aspect",
+    "background", "interlace", "srgb", "chromaticity", "bits", "compression", "dpi_info", "timestamp",
+    "date:create", "date:modify", "png:text", "ihdr", "_compression",
+}
 
 
 def _sampler_like(ct: str, ins: Dict[str, Any]) -> bool:
@@ -151,12 +158,16 @@ def raw_metadata(path: str | Path, deep: bool = True) -> Dict[str, Any]:
             out["format"] = im.format or ""
             out["size"] = list(im.size)
             out["mode"] = im.mode
-            for k in ("prompt", "workflow", "parameters", "Comment", "Description", "Software", "Author"):
-                v = im.info.get(k)
+            for k, raw_v in (im.info or {}).items():
+                if str(k).lower() in NON_TEXT_INFO:
+                    continue
+                v = raw_v
                 if isinstance(v, bytes):
                     v = _pretty_bytes_text(v)
-                if v:
-                    out["text"][k] = v
+                if isinstance(v, str) and v.strip():
+                    out["text"][str(k)] = v[:2_000_000]
+                elif isinstance(v, (int, float)) and not isinstance(v, bool):
+                    out["text"][str(k)] = str(v)
             exp = im.info.get("exif")
             if exp and isinstance(exp, bytes):
                 try:
@@ -545,15 +556,28 @@ def read_params(path: str | Path, deep: bool = True) -> Dict[str, Any]:
     }
     text = raw.get("text", {}) or {}
     exif = raw.get("exif", {}) or {}
+    from .parsers_more import (a1111_extras, civitai_resources, loads_json, parse_invokeai, parse_novelai,
+                               parse_sidecar, parse_swarmui, tool_from_parameters, workflow_to_prompt_graph)
 
-    parameters = text.get("parameters") or ""
-    workflow_json = text.get("workflow") or ""
+    def _ci(d, *keys, default=""):
+        if not isinstance(d, dict):
+            return default
+        low = {str(k).lower(): v for k, v in d.items()}
+        for k in keys:
+            v = low.get(str(k).lower())
+            if v not in (None, "", b""):
+                return v
+        return default
+
+    parameters = _ci(text, "parameters")
+    workflow_json = _ci(text, "workflow")
+    prompt_txt = _ci(text, "prompt")
     uc = exif.get("UserComment") or exif.get("ImageDescription") or ""
 
     # 收集所有可能的 ComfyUI prompt 候选，挑「可解析出节点最多」的那个（EXIF / tEXt / xmp / 字节兜底）
     candidates: List[tuple] = []
-    if text.get("prompt"):
-        candidates.append(("tEXt prompt", text["prompt"]))
+    if prompt_txt:
+        candidates.append(("tEXt prompt", prompt_txt))
     if uc and "class_type" in uc:
         candidates.append(("EXIF UserComment", uc[uc.find("{"):]))
     if raw.get("xmp") and "class_type" in raw["xmp"]:
@@ -581,8 +605,72 @@ def read_params(path: str | Path, deep: bool = True) -> Dict[str, Any]:
         res["ok"] = True
     elif parsed:
         res["notes"].append(parsed["error"])
+
+    # 只有 UI workflow 的图：按节点 widget 还原成近似 API 图，再走同一套解析（以前这种图直接判「读不到」）
+    if not res["ok"] and workflow_json:
+        try:
+            graph = workflow_to_prompt_graph(loads_json(workflow_json))
+        except Exception:                                        # noqa: BLE001
+            graph = None
+        if graph:
+            got = parse_comfy(json.dumps(graph, ensure_ascii=False))
+            if not got.get("error") and got.get("total_nodes"):
+                got["source"] = "UI workflow（按节点 widget 还原）"
+                res.update({k: v for k, v in got.items() if k != "kinds"})
+                res["kinds"] = got.get("kinds", {})
+                res["meta_source"] = got["source"]
+                res["ok"] = True
+                prompt_json = json.dumps(graph, ensure_ascii=False)
+                res["notes"].append("只存了 UI workflow：参数按节点 widget 顺序还原（自定义节点的高级设置可能不全）")
+
+    if not parameters and uc and "Steps:" in uc and "class_type" not in uc:
+        parameters = uc
+
+    # 其他工具（顺序：越具体的越先试）
+    if not res["ok"]:
+        other = None
+        sui = _ci(text, "sui_image_params") or None
+        if sui is None and "sui_image_params" in parameters:
+            sui = parameters
+        if sui is not None:
+            other = parse_swarmui({"sui_image_params": sui})
+        if other is None:
+            inv = _ci(text, "invokeai_metadata") or _ci(text, "sd-metadata") or _ci(text, "dream")
+            if inv:
+                other = parse_invokeai(inv)
+        if other is None:
+            nai = parse_novelai(_ci(text, "Comment"), _ci(text, "Description"))
+            other = nai
+        if other is None and not parameters:
+            side = Path(path).with_suffix(".json")
+            if side.is_file():
+                try:
+                    other = parse_sidecar(side.read_text(encoding="utf-8", errors="replace"))
+                except OSError:
+                    other = None
+        if other and other.get("graph"):                         # 侧车 JSON 里是 ComfyUI 图
+            got = parse_comfy(json.dumps(other["graph"], ensure_ascii=False))
+            if not got.get("error") and got.get("total_nodes"):
+                got["source"] = "侧车 JSON"
+                other = got
+        if other and (other.get("positive") or other.get("total_nodes")):
+            res.update({k: v for k, v in other.items() if k not in ("kinds", "graph")})
+            res["kinds"] = other.get("kinds", {})
+            res["meta_source"] = (other.get("notes") or [""])[0] or other.get("tool", "")
+            res["ok"] = True
+
     if not res["ok"] and parameters:
         parsed2 = parse_a1111(parameters)
+        civ = civitai_resources(parameters)
+        if civ["models"]:
+            parsed2["models"] = civ["models"] + parsed2.get("models", [])
+        if civ["loras"]:
+            parsed2["loras"] = civ["loras"] + parsed2.get("loras", [])
+        extra = a1111_extras(parameters)
+        parsed2["fields"].update(extra)
+        parsed2["tool"] = tool_from_parameters(parameters)
+        if extra.get("controlnet"):
+            parsed2["notes"].append("含 ControlNet：%d 个（参数在下面「提示」里）" % len(extra["controlnet"]))
         res.update({k: v for k, v in parsed2.items() if k != "kinds"})
         res["kinds"] = {}
         res["ok"] = True
@@ -597,7 +685,7 @@ def read_params(path: str | Path, deep: bool = True) -> Dict[str, Any]:
         "parameters": parameters[:20000],
         "exif_keys": list(exif.keys()),
     }
-    if not prompt_json and not workflow_json and not parameters and not exif:
+    if not res["ok"] and not prompt_json and not workflow_json and not parameters and not exif:
         res["notes"].append("这张图没有任何生成元数据（可能是截图、手绘图，或导出时被平台抹掉了 EXIF）")
     if not workflow_json and res["tool"] == "ComfyUI":
         res["notes"].append("只有 API prompt（可解析），没有 UI workflow")

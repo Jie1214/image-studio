@@ -179,15 +179,22 @@ image-studio/
 - **AVIF 很慢？** 正常，同画质它最小。批量时把并行线程调到 8 会快很多。
 - **想压视频/PDF？** 这个工具只管图片；视频可以另开一个功能模块（说一声就加）。
 
+### 支持哪些工具的图（解析兼容矩阵）
+**ComfyUI**（API `prompt`，只存 UI `workflow` 也能解析）/ **A1111 系**（含 Forge、SD.Next、Fooocus、Easy Diffusion、Draw Things，靠 `parameters` 文本 + `Version:` 识别）/ **SwarmUI**（`sui_image_params`）/ **InvokeAI**（`invokeai_metadata`、旧版 `sd-metadata` / `dream`）/ **NovelAI**（`Comment` + `Description`）/ **图片旁的同名 `.json`**（侧车文件）。加上 EXIF / XMP / 字节兜底三类兜底来源。
+
+读出来的信息：正向提示词、负向提示词、模型 / LoRA（A1111 系还能读 `Civitai resources` JSON，直接给出模型与 LoRA 名 + 权重）、采样参数（seed / steps / cfg / 采样器 / 调度器 / 尺寸 / 去噪 / clip skip）、Hires / ControlNet 摘要、Embedding、节点构成。
+
 ### 解析规则（为什么有些图读不到参数）
+- **容器里的 tEXt 键全收**（只排除 exif/xmp/dpi 这类技术键）—— 以前只认 7 个写死的键名，SwarmUI / InvokeAI 这类把参数放在自己键名里的图完全看不见。
 - **采样器按接线认，不按节点名认**：任何同时接了 positive / negative 且带 seed / steps / cfg / sampler_name 的节点都算采样器 —— 所以 `KSampler_A1111`、改名版、第三方包的采样节点都能读出来（曾经只认 `KSampler` 系列类名，导致这类图的提示词整片空着）。
+- **只存 UI workflow 的图也能读**：按节点的 widget 顺序把 `widgets_values` 还原成近似 API 图，再走同一套解析（静音节点跳过，连线按 `links` 还原）。
 - **提示词按 conditioning 链回溯**：顺着正/负链找到文本编码节点（`CLIPTextEncode` / `BNK_CLIPTextEncodeAdvanced` / 任何带 `text` 输入的自定义节点）；认不出的透传节点按惯例「输出槽 0=正向、1=负向」走，不会正负串味。
 - **文本键按「包含」匹配**：`text` / `text_g` / `populated_text`（IMPACT 的 `ImpactWildcardEncode`，优先它）/ `wildcard_text` / `caption` / `prompt_text`… 都算；同时排除 `model` / `width` / `seed` 这类非文本键，不会把模型名当提示词。
 - **文本是链接给的也跟得下去**：能穿过 `easy showAnything` / `Any Switch (rgthree)` / `String Literal` / `CR Text` 这类字符串中转节点。
 - **`ConditioningZeroOut` 这一侧直接判空**：接在负向就是「这张图不要负向提示词」，不会把上游的正向文本抄到负向去。
 - **正向被 `ConditioningZeroOut` 抹掉时**，会退回去把图里文本编码节点的文字捞出来，而不是显示「没有正向提示词」。
 - **尺寸**只取真正的数字（来自 `TTResolutionSelector` 这类链接的也认）；种子在独立节点（`Seed (rgthree)`）上也能认。
-- 回归测试：`.venv/Scripts/python.exe tests/test_parse_comfy.py`（9 个用例，覆盖上面每一条）。
+- 回归测试：`.venv/Scripts/python.exe tests/test_parse_comfy.py`（9 个用例）+ `tests/test_parse_tools.py`（6 个用例，覆盖各工具格式与 UI workflow 还原）。
 
 ### 目录填错时怎么办
 「读取该目录 / 扫描并预览」失败时，卡片里会**显示真实原因**（例如 `扫描失败：目录不存在：E:\图片参考\新图片`），并自动列出**这一层真实存在的文件夹**（`/api/list_dirs`），点一下就填进输入框 —— 不用手打路径，也不会只留一句「扫描失败」。
