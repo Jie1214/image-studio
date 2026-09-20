@@ -179,6 +179,8 @@
 
 <!-- ===================== 读图参数（独立 tab，支持批量） ===================== -->
 <div id="view-meta" class="view" hidden>
+  <div class="split">
+  <div class="split-left">
   <section class="card">
     <div class="card-head">
       <span class="ttl">图片来源</span>
@@ -230,30 +232,37 @@
     </div>
   </section>
 
-  <section class="card" id="meta-detail-card" hidden>
-    <div class="card-head">
-      <span class="ttl" id="meta-detail-title">参数详情</span>
-      <span class="spacer"></span>
-      <a class="btn" id="meta-dl" hidden download>⬇ 保存这一张的报告</a>
-      <button class="btn ghost" id="meta-detail-close">收起</button>
-    </div>
-    <div class="meta-wrap">
-      <div class="meta-left">
+  </div><!-- /split-left -->
+
+  <div class="split-right">
+    <section class="card" id="meta-detail-card">
+      <div class="card-head">
+        <span class="ttl" id="meta-detail-title">参数详情</span>
+        <span class="spacer"></span>
+        <a class="btn sm" id="meta-dl" hidden download>⬇ 保存报告</a>
+        <button class="btn ghost sm" id="meta-detail-close">清除</button>
+      </div>
+      <div class="meta-stack">
         <div class="bigwrap"><img id="meta-big" alt=""></div>
         <div class="bigbar">
-          <span class="hint mono" id="meta-big-info"></span>
+          <span class="hint mono" id="meta-big-info">左边点一行 → 这里看大图</span>
           <span class="spacer"></span>
           <button class="btn sm" id="meta-big-fit">适应窗口</button>
-          <a class="btn sm" id="meta-big-open" target="_blank">新窗口打开原图</a>
+          <a class="btn sm" id="meta-big-open" target="_blank">打开原图</a>
+        </div>
+        <div class="meta-right" id="meta-panel">
+          <div class="hint" style="padding:12px">左边点一行 → 这里显示模型 / LoRA / 提示词 / 采样参数</div>
         </div>
       </div>
-      <div class="meta-right" id="meta-panel"></div>
-    </div>
-  </section>
+    </section>
+  </div><!-- /split-right -->
+  </div><!-- /split -->
 </div><!-- /view-meta -->
 
 <!-- ===================== 一键分类（独立 tab） ===================== -->
 <div id="view-classify" class="view" hidden>
+  <div class="split">
+  <div class="split-left">
   <section class="card">
     <div class="card-head">
       <span class="ttl">分类设置</span>
@@ -294,7 +303,7 @@
           <option value="overwrite">覆盖</option>
         </select>
       </label>
-      <label class="lab-col">输出根目录（留空 = output\分类_时间戳）
+      <label class="lab-col" style="grid-column:1/-1">输出根目录（留空 = output\分类_时间戳）
         <input class="input" id="cls-out" placeholder="留空即可">
       </label>
     </div>
@@ -331,25 +340,30 @@
     </div>
   </section>
 
-  <section class="card" id="cls-detail-card" hidden>
-    <div class="card-head">
-      <span class="ttl" id="cls-detail-title">条目详情</span>
-      <span class="spacer"></span>
-      <button class="btn ghost" id="cls-detail-close">收起</button>
-    </div>
-    <div class="meta-wrap">
-      <div class="meta-left">
+  </div><!-- /split-left -->
+
+  <div class="split-right">
+    <section class="card" id="cls-detail-card">
+      <div class="card-head">
+        <span class="ttl" id="cls-detail-title">条目详情</span>
+        <span class="spacer"></span>
+        <button class="btn ghost sm" id="cls-detail-close">清除</button>
+      </div>
+      <div class="meta-stack">
         <div class="bigwrap"><img id="cls-big" alt=""></div>
         <div class="bigbar">
-          <span class="hint mono" id="cls-big-info"></span>
+          <span class="hint mono" id="cls-big-info">左边点一行 → 这里看大图</span>
           <span class="spacer"></span>
           <button class="btn sm" id="cls-big-fit">适应窗口</button>
-          <a class="btn sm" id="cls-big-open" target="_blank">新窗口打开</a>
+          <a class="btn sm" id="cls-big-open" target="_blank">打开原图</a>
+        </div>
+        <div class="meta-right" id="cls-detail">
+          <div class="hint" style="padding:12px">左边点一行 → 这里看判定依据和完整参数</div>
         </div>
       </div>
-      <div class="meta-right" id="cls-detail"></div>
-    </div>
-  </section>
+    </section>
+  </div><!-- /split-right -->
+  </div><!-- /split -->
 </div><!-- /view-classify -->
 </main>
 

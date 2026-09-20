@@ -868,9 +868,23 @@
       } catch (e) { toast('扫描失败：' + e.message, 4200); $('#meta-summary').textContent = '扫描失败'; }
     };
     $('#meta-scan-dir').addEventListener('keydown', e => { if (e.key === 'Enter') $('#btn-meta-scan').click(); });
-    $('#meta-clear').onclick = () => { metaState.files = []; renderMetaTable(); $('#meta-detail-card').hidden = true; toast('已清空'); };
+    $('#meta-clear').onclick = () => {
+      metaState.files = [];
+      renderMetaTable();
+      $('#meta-detail-close').click();
+      toast('已清空');
+    };
     $('#meta-copy-pos-all').onclick = copyAllPositive;
-    $('#meta-detail-close').onclick = () => { $('#meta-detail-card').hidden = true; };
+    $('#meta-detail-close').onclick = () => {
+      $('#meta-detail-title').textContent = '参数详情';
+      $('#meta-panel').innerHTML = '<div class="hint" style="padding:12px">左边点一行 → 这里显示模型 / LoRA / 提示词 / 采样参数</div>';
+      const img = $('#meta-big');
+      img.removeAttribute('src');
+      img.onclick = null;
+      $('#meta-big-info').textContent = '左边点一行 → 这里看大图';
+      $('#meta-big-open').removeAttribute('href');
+      $('#meta-dl').hidden = true;
+    };
     /* ---- 一键分类 tab ---- */
     $('#cls-rule').onchange = () => { $('#cls-wrap-c').hidden = ($('#cls-rule').value !== 'three'); };
     ['#cls-name-a', '#cls-name-b', '#cls-name-c'].forEach(s => {
@@ -890,7 +904,15 @@
       if (!tr || tr.dataset.i === undefined) return;
       clsDetail(+tr.dataset.i);
     };
-    $('#cls-detail-close').onclick = () => { $('#cls-detail-card').hidden = true; };
+    $('#cls-detail-close').onclick = () => {
+      $('#cls-detail-title').textContent = '条目详情';
+      $('#cls-detail').innerHTML = '<div class="hint" style="padding:12px">左边点一行 → 这里看判定依据和完整参数</div>';
+      const img = $('#cls-big');
+      img.removeAttribute('src');
+      img.onclick = null;
+      $('#cls-big-info').textContent = '左边点一行 → 这里看大图';
+      $('#cls-big-open').removeAttribute('href');
+    };
     $('#meta-tbody').onclick = e => {
       const tr = e.target.closest('tr'); if (!tr) return;
       const it = metaState.files[+tr.dataset.i]; if (!it) return;

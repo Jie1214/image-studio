@@ -9,7 +9,7 @@
 [hidden]{display:none !important}
 html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 var(--font)}
 a{color:var(--gold);text-decoration:none}
-main{padding:14px 18px 28px;display:flex;flex-direction:column;gap:14px;max-width:1560px;margin:0 auto}
+main{padding:14px 18px 28px;display:flex;flex-direction:column;gap:14px;max-width:1720px;margin:0 auto}
 
 /* 顶栏 */
 .topbar{display:flex;align-items:center;gap:12px;padding:11px 18px;border-bottom:1px solid var(--line);
@@ -114,7 +114,19 @@ textarea.input{resize:vertical;font:13px/1.6 ui-monospace,Consolas,monospace}
 .tab.active{color:var(--gold2);border-bottom-color:var(--gold);background:var(--card);font-weight:600}
 .view[hidden]{display:none}
 
-/* 详情：左大图 + 右参数 */
+/* 左右分栏：左列表 / 右详情（上图 + 下文案详情） */
+.split{display:grid;grid-template-columns:minmax(0,1fr) minmax(340px,38%);gap:16px;align-items:start}
+@media (max-width:1180px){.split{grid-template-columns:minmax(0,1fr)}}
+.split-right{position:sticky;top:64px}
+.split-right .card{padding:12px 14px}
+.meta-stack{display:flex;flex-direction:column;gap:10px}
+.meta-stack .bigwrap{max-height:36vh;min-height:150px;padding:6px}
+.meta-stack .bigwrap img{max-height:calc(36vh - 16px)}
+.meta-stack .bigwrap.actual{max-height:none}
+.meta-stack .meta-right{max-height:54vh;overflow:auto;padding-right:4px}
+.meta-stack .meta-right .meta-grid{grid-template-columns:minmax(0,1fr)}
+
+/* 详情：左大图 + 右参数（压缩 tab 的老版式，保留兼容） */
 .meta-wrap{display:grid;grid-template-columns:minmax(300px,40%) minmax(0,1fr);gap:16px;align-items:start}
 @media (max-width:900px){.meta-wrap{grid-template-columns:minmax(0,1fr)}}
 .meta-left{position:sticky;top:64px}
