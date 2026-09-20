@@ -354,11 +354,9 @@
       return '<tr data-i="' + i + '"><td>' + thumb + '</td><td>' + esc(f.name) + '</td>'
         + '<td class="mono">' + size + '</td><td class="bad">未解析</td></tr>';
     }
-    // 有生成参数 → 「详情」按钮；没有 → 横线（不可点）
-    const act = m.ok
-      ? '<button class="btn sm" data-act="meta-detail">详情</button>'
-      : '<span class="dash" title="这张图里没有生成参数（模型 / LoRA / 提示词都没读到）">—</span>';
-    return '<tr data-i="' + i + '"' + (m.ok ? '' : ' class="norow"') + '>'
+    // 只要解析过就给「详情」按钮；没读到参数时右边只出图 + 占位文案
+    const act = '<button class="btn sm" data-act="meta-detail">详情</button>';
+    return '<tr data-i="' + i + '">'
       + '<td>' + thumb + '</td>'
       + '<td class="fname" title="' + esc(f.path) + '">' + esc(f.name) + '</td>'
       + '<td class="mono">' + size + '</td>'
@@ -545,19 +543,23 @@
     const census = Object.entries(m.node_census || {}).slice(0, 14)
       .map(([k, v]) => '<span class="tag">' + esc(k) + ' ×' + v + '</span>').join(' ');
 
+    const ph = t => '<div class="hint ph">（' + esc(t) + '）</div>';
     $(tsel).hidden = false;
     $(tsel).innerHTML = ''
       + '<div class="meta-grid">'
       + '  <div>'
       + '    <div class="meta-file"><b>' + esc(f.name) + '</b> · ' + f.w + '×' + f.h + ' · ' + fmtBytes(f.bytes)
-      + ' · ' + esc(f.format || '') + ' · <span class="' + (ok ? 'good' : 'warn') + '">' + esc(m.tool) + '</span>'
+      + ' · ' + esc(f.format || '') + ' · <span class="' + (ok ? 'good' : 'warn') + '">' + esc(ok ? m.tool : '无生成参数') + '</span>'
       + (m.meta_source ? ' <span class="tag">来源：' + esc(m.meta_source) + '</span>' : '') + '</div>'
-      + (models ? '    <div class="meta-sec"><h4>模型（' + m.models.length + '）</h4><table class="tbl mini">' + models + '</table></div>' : '')
+      + (models ? '    <div class="meta-sec"><h4>模型（' + m.models.length + '）</h4><table class="tbl mini">' + models + '</table></div>'
+        : '    <div class="meta-sec"><h4>模型</h4>' + ph('没有读到模型信息') + '</div>')
       + (loras ? '    <div class="meta-sec"><h4>LoRA（' + m.loras.length + '）</h4><table class="tbl mini"><thead><tr><th>名称</th><th>model 权重</th><th>clip 权重</th></tr></thead>' + loras + '</table></div>' : '')
       + (kinds ? '    <div class="meta-sec"><h4>其他资源</h4><table class="tbl mini">' + kinds + '</table></div>' : '')
       + ((m.embeddings || []).length ? '    <div class="meta-sec"><h4>Embedding</h4><div>' + m.embeddings.map(e => '<span class="tag">' + esc(e) + '</span>').join(' ') + '</div></div>' : '')
-      + (Object.keys(m.sampler || {}).length ? '    <div class="meta-sec"><h4>采样参数</h4><div class="meta-kv">' + kv(m.sampler) + '</div></div>' : '')
+      + (Object.keys(m.sampler || {}).length ? '    <div class="meta-sec"><h4>采样参数</h4><div class="meta-kv">' + kv(m.sampler) + '</div></div>'
+        : '    <div class="meta-sec"><h4>采样参数</h4>' + ph('没有采样参数（seed / steps / cfg / sampler…）') + '</div>')
       + (m.total_nodes ? '    <div class="meta-sec"><h4>节点构成（共 ' + m.total_nodes + ' 个）</h4><div class="meta-kv">' + census + '</div></div>' : '')
+      + (ok ? '' : '    <div class="meta-sec"><h4>说明</h4>' + ph('这张图里没有生成参数（ComfyUI / A1111 / EXIF 都没读到），右边只能看大图') + '</div>')
       + '  </div>'
       + '  <div>'
       + '    <div class="meta-sec"><h4>正向提示词 <button class="btn sm js-copy-pos">复制</button></h4><pre class="out">' + esc(m.positive || '（这张图没有正向提示词）') + '</pre></div>'
@@ -855,12 +857,27 @@
       uploadAndReadMeta(e.target.files);
     };
     $('#btn-meta-scan').onclick = async () => {
-      const dir = $('#meta-scan-dir').value.trim();
-      if (!dir) return toast('请先填写要读取的目录');
+      let dir = $('#meta-scan-dir').value.trim();
+      if (!dir) {
+        // 空输入别"点了没反应"：先尝试用上次读过的目录，再不行就把光标和提示摆到眼前
+        const last = metaState.lastDir || (() => { try { return localStorage.getItem('is_meta_dir') || ''; } catch (e) { return ''; } })();
+        if (!last) {
+          const inp = $('#meta-scan-dir');
+          inp.focus();
+          inp.classList.add('need');
+          setTimeout(() => inp.classList.remove('need'), 1800);
+          return toast('先在输入框里填一个目录路径（浏览器选文件夹拿不到绝对路径），再点「读取该目录」', 4600);
+        }
+        dir = last;
+        $('#meta-scan-dir').value = dir;
+        toast('输入框为空，改用上次读过的目录：' + dir, 3200);
+      }
       $('#meta-summary').textContent = '正在扫描 ' + dir + ' …';
       try {
         await ensureDirAllowed(dir);       // 用户手写的目录自动进白名单，免得读取时被挡
         const j = await api('/api/scan', { method: 'POST', body: { dir: dir, recursive: $('#meta-scan-rec').checked } });
+        metaState.lastDir = dir;
+        try { localStorage.setItem('is_meta_dir', dir); } catch (e) {}
         if (!j.total) return toast('这个目录里没有图片');
         await parseMetaBatch((j.files || []).map(f => f.path));
       } catch (e) { toast('扫描失败：' + e.message, 4200); $('#meta-summary').textContent = '扫描失败'; }
@@ -914,13 +931,16 @@
     $('#meta-tbody').onclick = e => {
       const tr = e.target.closest('tr'); if (!tr) return;
       const it = metaState.files[+tr.dataset.i]; if (!it) return;
-      if (it.meta && it.meta.ok) showMetaDetail(it);
-      else if (it.meta) toast('这张图里没有生成参数（模型 / LoRA / 提示词都读不到）', 2800);
+      if (it.meta) showMetaDetail(it);
     };
     $('#meta-detail-card').addEventListener('dblclick', e => { if (e.detail === 2 && e.target.closest('img')) $('#meta-big-fit').click(); });
     // 顶栏 tab
     $$('#tabs .tab').forEach(b => { b.onclick = () => switchView(b.dataset.view); });
     renderMetaTable();
+    try {                                   // 上次读过的目录填回去，「读取该目录」随时有东西可执行
+      const last = localStorage.getItem('is_meta_dir');
+      if (last && !$('#meta-scan-dir').value) { $('#meta-scan-dir').value = last; metaState.lastDir = last; }
+    } catch (e) {}
     $('#btn-clear').onclick = () => { state.files = []; renderTable(); $('#progress').hidden = true; $('#bar').style.width = '0'; $('#job-hint').textContent = '已清空'; };
     $('#recent-roots').onclick = e => { const b = e.target.closest('button'); if (b) { $('#scan-dir').value = b.dataset.dir; doScan(); } };
     $('#scan-dir').addEventListener('keydown', e => { if (e.key === 'Enter') doScan(); });

@@ -85,6 +85,10 @@ textarea.input{resize:vertical;font:13px/1.6 ui-monospace,Consolas,monospace}
 .tbl tr.norow{cursor:default}
 .tbl tr.norow:hover td{background:transparent}
 .dash{color:var(--dim);opacity:.6;font-weight:600}
+/* 空字段占位（没读到参数时右栏用这个显示，而不是整段消失） */
+.ph{font-style:italic;opacity:.75}
+input.need{border-color:var(--err) !important;animation:need .5s 3}
+@keyframes need{0%,100%{box-shadow:0 0 0 0 rgba(224,106,106,0)}50%{box-shadow:0 0 0 4px rgba(224,106,106,.35)}}
 
 /* 弹窗 */
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.74);display:flex;align-items:center;justify-content:center;z-index:50}
