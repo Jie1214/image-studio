@@ -344,34 +344,32 @@
 
   function metaRowItem(f, i) {
     const m = f.meta;
-    const thumb = '<img class="thumb" loading="lazy" src="/api/thumb?w=64&amp;path=' + encodeURIComponent(f.path) + '" alt="">';
+    const thumb = '<img class="thumb" loading="lazy" src="/api/thumb?w=96&amp;path=' + encodeURIComponent(f.path) + '" alt="">';
+    const size = (f.w && f.h) ? ((f.w || 0) + '×' + (f.h || 0)) : '—';
     if (f.busy) {
-      return '<tr data-i="' + i + '"><td>' + thumb + '</td><td>' + esc(f.name) + '</td><td colspan="6" class="hint">解析中…</td></tr>';
+      return '<tr data-i="' + i + '"><td>' + thumb + '</td><td>' + esc(f.name) + '</td>'
+        + '<td class="mono">' + size + '</td><td class="hint">解析中…</td></tr>';
     }
     if (!m) {
-      return '<tr data-i="' + i + '"><td>' + thumb + '</td><td>' + esc(f.name) + '</td><td colspan="6" class="bad">未解析</td></tr>';
+      return '<tr data-i="' + i + '"><td>' + thumb + '</td><td>' + esc(f.name) + '</td>'
+        + '<td class="mono">' + size + '</td><td class="bad">未解析</td></tr>';
     }
-    const models = (m.models || []).slice(0, 3).map(x => '<span class="tag" title="' + esc(x.kind) + '">' + esc(x.name) + '</span>').join(' ');
-    const more = (m.models || []).length > 3 ? ' <span class="hint">+' + ((m.models || []).length - 3) + '</span>' : '';
-    const loras = (m.loras || []).slice(0, 3).map(x => '<span class="tag">' + esc(x.name.replace(/\.safetensors$|\.pt$|\.ckpt$/i, '')) + (x.strength_model != null ? ' ' + x.strength_model : '') + '</span>').join(' ');
-    const loraMore = (m.loras || []).length > 3 ? ' <span class="hint">+' + ((m.loras || []).length - 3) + '</span>' : '';
-    const pos = (m.positive || '').replace(/\s+/g, ' ');
-    return '<tr data-i="' + i + '">'
+    // 有生成参数 → 「详情」按钮；没有 → 横线（不可点）
+    const act = m.ok
+      ? '<button class="btn sm" data-act="meta-detail">详情</button>'
+      : '<span class="dash" title="这张图里没有生成参数（模型 / LoRA / 提示词都没读到）">—</span>';
+    return '<tr data-i="' + i + '"' + (m.ok ? '' : ' class="norow"') + '>'
       + '<td>' + thumb + '</td>'
-      + '<td><div>' + esc(f.name) + '</div><div class="hint mono">' + esc((f.path || '').replace(/[^\\/]+$/, '')) + '</div></td>'
-      + '<td class="mono">' + (f.w || 0) + '×' + (f.h || 0) + '</td>'
-      + '<td><span class="' + (m.ok ? 'good' : 'warn') + '">' + esc(m.tool || '') + '</span></td>'
-      + '<td>' + (models || '<span class="hint">—</span>') + more + '</td>'
-      + '<td>' + (loras || '<span class="hint">—</span>') + loraMore + '</td>'
-      + '<td class="hint" title="' + esc(pos.slice(0, 400)) + '">' + esc(pos.slice(0, 90) || '—') + '</td>'
-      + '<td><button class="btn sm" data-act="meta-detail">详情</button></td>'
+      + '<td class="fname" title="' + esc(f.path) + '">' + esc(f.name) + '</td>'
+      + '<td class="mono">' + size + '</td>'
+      + '<td>' + act + '</td>'
       + '</tr>';
   }
 
   function renderMetaTable() {
     const tb = $('#meta-tbody');
     if (!metaState.files.length) {
-      tb.innerHTML = '<tr><td colspan="8" class="empty">列表为空：拖入图片 / 选文件夹 / 填目录后点「读取该目录」</td></tr>';
+      tb.innerHTML = '<tr><td colspan="4" class="empty">列表为空：拖入图片 / 选文件夹 / 填目录后点「读取该目录」</td></tr>';
     } else {
       tb.innerHTML = metaState.files.map((f, i) => metaRowItem(f, i)).join('');
     }
@@ -916,9 +914,10 @@
     $('#meta-tbody').onclick = e => {
       const tr = e.target.closest('tr'); if (!tr) return;
       const it = metaState.files[+tr.dataset.i]; if (!it) return;
-      if (it.meta) showMetaDetail(it);
+      if (it.meta && it.meta.ok) showMetaDetail(it);
+      else if (it.meta) toast('这张图里没有生成参数（模型 / LoRA / 提示词都读不到）', 2800);
     };
-    $('#meta-detail-card').addEventListener('dblclick', e => { if (e.detail === 2) $('#meta-detail-card').hidden = true; });
+    $('#meta-detail-card').addEventListener('dblclick', e => { if (e.detail === 2 && e.target.closest('img')) $('#meta-big-fit').click(); });
     // 顶栏 tab
     $$('#tabs .tab').forEach(b => { b.onclick = () => switchView(b.dataset.view); });
     renderMetaTable();

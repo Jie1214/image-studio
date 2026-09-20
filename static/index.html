@@ -211,22 +211,21 @@
   <section class="card">
     <div class="card-head">
       <span class="ttl">批量解析结果</span>
-      <span class="hint">点任意一行看完整参数（模型 / LoRA / 正负提示词 / 采样）</span>
+      <span class="hint">点「详情」在右边看完整参数（模型 / LoRA / 正负提示词 / 采样）</span>
       <span class="spacer"></span>
       <button class="btn" id="meta-copy-pos-all">📋 复制所有正向提示词</button>
       <a class="btn" id="meta-export" hidden download>⬇ 导出全部报告（Markdown）</a>
     </div>
     <div class="table-wrap">
-      <table class="tbl">
+      <table class="tbl slim">
         <thead>
           <tr>
-            <th style="width:64px">预览</th><th>文件名</th><th style="width:110px">尺寸</th>
-            <th style="width:104px">工具</th><th style="width:210px">模型</th>
-            <th style="width:190px">LoRA</th><th>正向提示词</th><th style="width:78px">操作</th>
+            <th style="width:64px">预览</th><th>文件名</th>
+            <th style="width:130px">尺寸</th><th style="width:84px">操作</th>
           </tr>
         </thead>
         <tbody id="meta-tbody">
-          <tr><td colspan="8" class="empty">列表为空：拖入图片 / 选文件夹 / 填目录后点「读取该目录」</td></tr>
+          <tr><td colspan="4" class="empty">列表为空：拖入图片 / 选文件夹 / 填目录后点「读取该目录」</td></tr>
         </tbody>
       </table>
     </div>
