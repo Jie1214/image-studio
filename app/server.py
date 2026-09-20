@@ -184,6 +184,11 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"ok": True, "opened": str(p)})
                 except Exception as exc:       # noqa: BLE001
                     return self._json({"ok": False, "error": str(exc)}, 500)
+            # 未知路由：先把请求体读干净再回 404，否则残留字节会污染同一条 keep-alive 连接上的后续请求
+            try:
+                self._body()
+            except Exception:
+                pass
             return self._json({"ok": False, "error": "未知接口 %s" % path}, 404)
         except Exception as exc:      # noqa: BLE001
             return self._json({"ok": False, "error": "%s: %s" % (type(exc).__name__, exc)}, 500)
