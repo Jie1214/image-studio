@@ -26,7 +26,7 @@
 .venv\Scripts\python.exe run_server.py --no-browser
 ```
 
-## 二、三种批量用法
+## 二、四种批量用法
 
 | 用法 | 适合 | 操作 |
 | --- | --- | --- |
@@ -58,13 +58,33 @@
 - **并排对比**：左右各一张，看细节
 - 顶部显示：原体积 → 压缩后体积、节省百分比、压缩后尺寸、实际使用的质量值
 
-## 四、输出
+## 四、读图参数（模型 / LoRA / 提示词）
+
+把图丢进最下面那张「④ 读图参数」卡片（或点结果表里任意一行的「参数」按钮），自动解析出生成参数：
+
+| 输出 | 内容 |
+| --- | --- |
+| **模型** | Checkpoint / UNet / VAE / CLIP·文本编码器 / ControlNet / 放大模型 / IPAdapter… |
+| **LoRA** | 名称 + `model` 权重 + `clip` 权重（按加载链顺序列出） |
+| **提示词** | 正向 / 负向各一栏，一键复制；自动提取 `embedding:xxx`（Textual Inversion） |
+| **采样参数** | seed / steps / cfg / sampler / scheduler / denoise / 宽高 / batch（A1111 另有 clip skip 等） |
+| **其它** | 节点构成统计、元数据来源、原始 JSON 可展开复制；**「⬇ 保存这份报告」**导出一份 Markdown |
+
+**认得这几种写法**：
+
+1. **ComfyUI**：PNG 的 `prompt`/`workflow` tEXt 块；JPEG/WebP 的 EXIF UserComment；XMP；以及**字节兜底**（容器读不到时直接在文件里搜工作流 JSON，按「含 class_type 最多的对象」取，避免只截到一个子节点）。
+2. **A1111 / Forge / SD.Next**：`parameters` 文本，包括 `<lora:名字:权重>` 与 `Lora hashes:`。
+3. 提示词不是直接从节点抄的，而是**顺 conditioning 链回溯**：`KSampler.positive/negative` → 透传节点（ControlNetApplyAdvanced / ConditioningCombine / SetArea / Concat…）→ `CLIPTextEncode`，并按**输出槽位**区分正负，正负不会串味。
+
+> 没有元数据的图（截图、手绘、被平台二次抹过的图）会明确告诉你「未检测到生成参数」，不会瞎猜。
+
+## 五、输出
 
 - 默认输出到项目下的 `output\压缩_年月日-时分秒\`，文件名沿用原名、扩展名随目标格式（`photo.jpg` → `photo.webp`）。
 - 输出目录可在**设置**里改（比如指到你的归档盘）。
 - 「⬇ 下载全部（ZIP）」把这一批打包下载；「📂 打开输出目录」直接在资源管理器里打开。
 
-## 五、设置（`config.json`）
+## 六、设置（`config.json`）
 
 设置页保存到项目根目录的 `config.json`（首次运行由 `config.example.json` 生成）。
 
@@ -85,7 +105,7 @@
 
 > **注意**：`config.json` 里会带你的本机路径，`.gitignore` 已经排除它，分享/推仓库时只带 `config.example.json`。
 
-## 六、HTTP 接口（想脚本化调用可以直接用）
+## 七、HTTP 接口（想脚本化调用可以直接用）
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
@@ -98,15 +118,17 @@
 | POST | `/api/cancel` `{id}` | 停止任务 |
 | GET | `/api/zip?id=` | 打包下载 |
 | GET | `/api/thumb?path=&w=` | 缩略图（界面用） |
+| POST | `/api/meta` `{path}` | 读图片生成参数（模型 / LoRA / 提示词 / 采样参数） |
 | POST | `/api/reveal` `{path}` | 在资源管理器里打开目录 |
 
-## 七、目录结构
+## 八、目录结构
 
 ```
 image-studio/
 ├─ app/
 │  ├─ __init__.py      配置读写（路径全部可配，代码里不写死本机路径）
 │  ├─ imaging.py       压缩核心：加载 / 缩放 / 编码 / 二分到目标体积 / 元数据
+│  ├─ metadata.py      读图参数：ComfyUI 工作流 / A1111 parameters 解析
 │  ├─ jobs.py          批量引擎：扫描目录、线程池、进度快照、打包 ZIP
 │  └─ server.py        HTTP 接口（标准库 http.server）
 ├─ static/             前端（原生 HTML/CSS/JS，无框架）
@@ -116,7 +138,7 @@ image-studio/
 └─ output/             默认输出目录
 ```
 
-## 八、常见问题
+## 九、常见问题
 
 - **压完反而更大？** 勾着「不比原图小就保留原文件」，表格里会显示「已保留原文件」。想强制重编码就取消勾选。
 - **线条图/截图转 WebP 变大了？** 正常现象：这类图 PNG 已经很小，WebP 的低频压缩反而不划算。表格里会标一个黄色「变大了」标签 —— 这种图保持原格式（PNG）或者把 PNG 调色板量化调到 256 色更合适。

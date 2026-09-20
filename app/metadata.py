@@ -1,0 +1,495 @@
+# -*- coding: utf-8 -*-
+"""读图参数：从图片元数据里还原「模型 / LoRA / 提示词 / 采样参数」。
+
+支持三类来源：
+  1. ComfyUI —— PNG 的 tEXt 块 prompt / workflow（API 格式 JSON），或 JPEG/WebP 的 EXIF UserComment
+  2. A1111 / Forge / SD.Next —— `parameters` 文本（含 <lora:xxx:0.8> 写法）
+  3. 兜底 —— 直接在文件字节里搜 ComfyUI 的 JSON 特征（class_type / nodes），不依赖容器类型
+"""
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from PIL import Image
+
+# 节点类名 → (归类, 取文件名的输入键)
+LOADER_MAP: Dict[str, tuple] = {
+    "CheckpointLoaderSimple": ("Checkpoint", "ckpt_name"),
+    "CheckpointLoader": ("Checkpoint", "ckpt_name"),
+    "ImageOnlyCheckpointLoader": ("Checkpoint", "ckpt_name"),
+    "unCLIPCheckpointLoader": ("Checkpoint", "ckpt_name"),
+    "UNETLoader": ("UNet / diffusion model", "unet_name"),
+    "DiffusionModelLoader": ("UNet / diffusion model", "model_name"),
+    "LoraLoader": ("LoRA", "lora_name"),
+    "LoraLoaderModelOnly": ("LoRA", "lora_name"),
+    "VAELoader": ("VAE", "vae_name"),
+    "CLIPLoader": ("CLIP / text encoder", "clip_name"),
+    "DualCLIPLoader": ("CLIP / text encoder", "clip_name1"),
+    "TripleCLIPLoader": ("CLIP / text encoder", "clip_name1"),
+    "CLIPVisionLoader": ("CLIP Vision", "clip_name"),
+    "ControlNetLoader": ("ControlNet", "control_net_name"),
+    "DiffControlNetLoader": ("ControlNet", "control_net_name"),
+    "UpscaleModelLoader": ("放大模型", "model_name"),
+    "IPAdapterModelLoader": ("IPAdapter", "ipadapter_file"),
+    "IPAdapterUnifiedLoader": ("IPAdapter 预设", "preset"),
+    "StyleModelLoader": ("风格模型", "style_model_name"),
+    "GLIGENLoader": ("GLIGEN", "gligen_name"),
+    "PhotoMakerLoader": ("PhotoMaker", "photomaker_model_name"),
+    "InstantIDModelLoader": ("InstantID", "instantid_file"),
+    "AnimateDiffLoaderWithContext": ("AnimateDiff", "model_name"),
+}
+
+# 需要跟着往下走的「透传」条件节点（把 conditioning 串起来）
+COND_PASS = {
+    "ConditioningCombine", "ConditioningConcat", "ConditioningAverage", "ConditioningSetArea",
+    "ConditioningSetAreaPercentage", "ConditioningSetTimestepRange", "ConditioningSetMask",
+    "ConditioningZeroOut", "ControlNetApply", "ControlNetApplyAdvanced", "ConditioningSetAreaStrength",
+    "ConditioningSetTimestepRange", "ConditioningPostProcess", "ConditioningSetProperties",
+}
+TEXT_KEYS = ("text", "text_g", "text_l", "string", "prompt", "positive_prompt", "value", "prompt_text")
+SAMPLERS = {"KSampler", "KSamplerAdvanced", "SamplerCustom", "SamplerCustomAdvanced", "KSamplerSelect"}
+
+
+def _is_link(v: Any) -> bool:
+    return isinstance(v, (list, tuple)) and len(v) == 2 and isinstance(v[0], (str, int))
+
+
+def _decode_exif_text(b: bytes) -> str:
+    """EXIF UserComment：先剥编码前缀，再按可能的编码解出来（优先能当 JSON 解析的那种）。"""
+    if not b:
+        return ""
+    for pre in (b"ASCII\x00\x00\x00", b"UNICODE\x00", b"UTF8\x00", b"JIS\x00\x00\x00\x00\x00"):
+        if b.startswith(pre):
+            b = b[len(pre):]
+            break
+    b = b.strip(b"\x00 \r\n\t")
+    cands = []
+    for enc in ("utf-8", "utf-16-le", "utf-16-be", "latin-1"):
+        try:
+            s = b.decode(enc, "ignore").strip("\x00 \r\n\t")
+        except Exception:
+            continue
+        if not any(c.isalnum() for c in s):
+            continue
+        cands.append(s)
+    for s in cands:            # 能当 JSON 看的优先
+        t = s.lstrip()
+        if t.startswith("{") or t.startswith("["):
+            return s
+    return cands[0] if cands else ""
+
+
+def _pretty_bytes_text(b: bytes) -> str:
+    if not b:
+        return ""
+    if b.startswith((b"ASCII", b"UNICODE", b"UTF8", b"JIS")) or b"\x00" in b[:8]:
+        return _decode_exif_text(b)
+    s = b.decode("utf-8", "ignore").strip("\x00 \r\n\t")
+    if not any(c.isalnum() for c in s):
+        s = b.decode("latin-1", "ignore").strip("\x00 \r\n\t")
+    return s
+
+
+def _loads_tolerant(s: str) -> Any:
+    """容忍尾部垃圾/补齐空字节的 JSON 解析。"""
+    s = s.strip().strip("\x00")
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+    start = s.find("{")
+    while start != -1:
+        try:
+            obj, _end = json.JSONDecoder().raw_decode(s[start:])
+            return obj
+        except Exception:
+            start = s.find("{", start + 1)
+    raise ValueError("找不到可解析的 JSON")
+
+
+def raw_metadata(path: str | Path) -> Dict[str, Any]:
+    """取出容器里的原始元数据：PNG tEXt、EXIF、XMP，外加字节兜底。"""
+    path = Path(path)
+    out: Dict[str, Any] = {"keys": [], "text": {}, "exif": {}, "xmp": ""}
+    try:
+        with Image.open(path) as im:
+            out["format"] = im.format or ""
+            out["size"] = list(im.size)
+            out["mode"] = im.mode
+            for k in ("prompt", "workflow", "parameters", "Comment", "Description", "Software", "Author"):
+                v = im.info.get(k)
+                if isinstance(v, bytes):
+                    v = _pretty_bytes_text(v)
+                if v:
+                    out["text"][k] = v
+            exp = im.info.get("exif")
+            if exp and isinstance(exp, bytes):
+                try:
+                    ex = Image.Exif()
+                    ex.load(exp)
+                    for tid, name in ((0x010E, "ImageDescription"), (0x013B, "Artist"),
+                                      (0x0131, "Software"), (0x9286, "UserComment"), (0x010F, "Make")):
+                        v = ex.get(tid)
+                        if isinstance(v, bytes):
+                            v = _pretty_bytes_text(v)
+                        if v:
+                            out["exif"][name] = v
+                    if not out["exif"]:
+                        out["exif"] = {"_tags": len(ex)}
+                except Exception:
+                    pass
+            try:
+                ex = im.getexif()
+                for tid, name in ((0x010E, "ImageDescription"), (0x9286, "UserComment"), (0x0131, "Software")):
+                    v = ex.get(tid)
+                    if isinstance(v, bytes):
+                        v = _pretty_bytes_text(v)
+                    if v:
+                        out["exif"].setdefault(name, v)
+            except Exception:
+                pass
+            xmp = im.info.get("xmp")
+            if isinstance(xmp, bytes):
+                xmp = xmp.decode("utf-8", "ignore")
+            if xmp:
+                out["xmp"] = xmp[:20000]
+    except Exception as exc:      # noqa: BLE001
+        out["error"] = "%s: %s" % (type(exc).__name__, exc)
+
+    # 字节兜底：有些容器（或二次处理过的图）Pillow 读不到 tEXt，但 JSON 还在文件里
+    try:
+        blob = path.read_bytes()
+        idx = blob.find(b'"class_type"')
+        if idx != -1:
+            best, best_n = "", 0
+            # 从最近的若干个 '{' 往前试，取「含 class_type 最多」的那个对象（避免只抓到一个子节点）
+            starts = []
+            pos = idx
+            for _ in range(12):
+                pos = blob.rfind(b"{", 0, pos if pos > 0 else 0)
+                if pos == -1:
+                    break
+                starts.append(pos)
+                pos = pos - 1 if pos > 0 else 0
+            for st in starts:
+                depth, end = 0, -1
+                limit = min(len(blob), st + 40_000_000)
+                for i in range(st, limit):
+                    c = blob[i]
+                    if c == 0x7B:
+                        depth += 1
+                    elif c == 0x7D:
+                        depth -= 1
+                        if depth == 0:
+                            end = i + 1
+                            break
+                if end <= st:
+                    continue
+                chunk = blob[st:end].decode("utf-8", "ignore")
+                n = chunk.count('"class_type"')
+                if n > best_n:
+                    best, best_n = chunk, n
+            if best and best_n > 0:
+                out["byte_json"] = best
+    except Exception:
+        pass
+
+    out["keys"] = list(out["text"].keys()) + (["xmp"] if out["xmp"] else [])
+    return out
+
+
+# 透传节点的「输出槽位 → 输入键」映射：不映射就会把正向链的文本带到负向去
+OUT_SLOT_INPUT: Dict[str, Dict[int, Any]] = {
+    "ControlNetApplyAdvanced": {0: "positive", 1: "negative"},
+    "ControlNetApply": {0: "conditioning"},
+    "ConditioningCombine": {0: ("conditioning_1", "conditioning_2")},
+    "ConditioningConcat": {0: ("conditioning_to", "conditioning_from")},
+    "ConditioningAverage": {0: ("conditioning_to", "conditioning_from")},
+    "ConditioningSetArea": {0: "conditioning"},
+    "ConditioningSetAreaPercentage": {0: "conditioning"},
+    "ConditioningSetAreaStrength": {0: "conditioning"},
+    "ConditioningSetMask": {0: "conditioning"},
+    "ConditioningSetTimestepRange": {0: "conditioning"},
+    "ConditioningSetProperties": {0: "conditioning"},
+    "ConditioningZeroOut": {0: "conditioning"},
+    "ConditioningPostProcess": {0: "conditioning"},
+    "ConditioningSetTimestepRange": {0: "conditioning"},
+}
+
+
+def _follow_text(nodes: Dict[str, Any], node_id: str, slot: Optional[int] = None,
+                 depth: int = 0, seen: Optional[set] = None) -> List[str]:
+    """顺着 conditioning 链找到提示词文本（按输出槽位走，避免正负串味）。"""
+    if depth > 14:
+        return []
+    seen = seen or set()
+    key = (str(node_id), slot)
+    if key in seen:
+        return []
+    seen.add(key)
+    node = nodes.get(str(node_id))
+    if not isinstance(node, dict):
+        return []
+    ct = node.get("class_type", "")
+    ins = node.get("inputs", {}) or {}
+
+    # 已知槽位映射的透传节点：只跟着对应的那条链走
+    if slot is not None and ct in OUT_SLOT_INPUT:
+        mapped = OUT_SLOT_INPUT[ct].get(slot)
+        if mapped is not None:
+            keys = mapped if isinstance(mapped, tuple) else (mapped,)
+            texts: List[str] = []
+            for k in keys:
+                v = ins.get(k)
+                if _is_link(v):
+                    texts += _follow_text(nodes, str(v[0]), int(v[1]), depth + 1, seen)
+                elif isinstance(v, str) and v.strip():
+                    texts.append(v.strip())
+            return [t for t in texts if t]
+
+    texts = []
+    if ct.startswith("CLIPTextEncode") or ct in ("BNK_CLIPTextEncodeAdvanced",):
+        for k in TEXT_KEYS:
+            v = ins.get(k)
+            if isinstance(v, str) and v.strip():
+                texts.append(v.strip())
+                break
+        return [t for t in texts if t]
+    # 兜底：没有槽位信息时按顺序跟所有 link（并收下像提示词的长字符串）
+    for k, v in ins.items():
+        if _is_link(v):
+            texts += _follow_text(nodes, str(v[0]), int(v[1]), depth + 1, seen)
+        elif isinstance(v, str) and k in TEXT_KEYS and len(v.strip()) > 1 and not v.lower().endswith(
+                (".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".png", ".jpg", ".webp")):
+            if v.strip() not in texts:
+                texts.append(v.strip())
+    return [t for t in texts if t]
+
+
+def parse_comfy(prompt_json: str) -> Dict[str, Any]:
+    try:
+        data = _loads_tolerant(prompt_json)
+    except Exception as exc:      # noqa: BLE001
+        return {"error": "prompt JSON 解析失败：%s" % exc}
+    if isinstance(data, dict) and "nodes" in data:      # 传进来的是 UI workflow
+        return {"error": "这是 UI workflow，不是可解析的 API prompt"}
+    nodes = {str(k): v for k, v in data.items() if isinstance(v, dict)}
+    models: List[Dict[str, str]] = []
+    loras: List[Dict[str, Any]] = []
+    kinds: Dict[str, List[str]] = {}
+    census: Dict[str, int] = {}
+    for nid, node in nodes.items():
+        ct = node.get("class_type", "?")
+        census[ct] = census.get(ct, 0) + 1
+        ins = node.get("inputs", {}) or {}
+        if ct in LOADER_MAP:
+            kind, key = LOADER_MAP[ct]
+            val = ins.get(key)
+            names = []
+            if isinstance(val, str):
+                names = [val]
+            else:      # DualCLIPLoader / TripleCLIPLoader 的 clip_name2/3
+                for k2 in ("clip_name1", "clip_name2", "clip_name3"):
+                    if isinstance(ins.get(k2), str):
+                        names.append(ins[k2])
+            for n in names:
+                if not n:
+                    continue
+                if kind == "LoRA":
+                    loras.append({
+                        "name": n,
+                        "strength_model": ins.get("strength_model"),
+                        "strength_clip": ins.get("strength_clip"),
+                        "node": nid,
+                    })
+                else:
+                    kinds.setdefault(kind, [])
+                    if n not in kinds[kind]:
+                        kinds[kind].append(n)
+    # 采样参数 + 从采样器回溯提示词
+    sampler: Dict[str, Any] = {}
+    positive: List[str] = []
+    negative: List[str] = []
+    for nid, node in nodes.items():
+        ct = node.get("class_type", "")
+        if ct not in SAMPLERS:
+            continue
+        ins = node.get("inputs", {}) or {}
+        if not sampler:
+            for k_in, k_out in (("seed", "seed"), ("noise_seed", "seed"), ("steps", "steps"), ("cfg", "cfg"),
+                                ("sampler_name", "sampler_name"), ("scheduler", "scheduler"), ("denoise", "denoise")):
+                if k_in in ins and not isinstance(ins[k_in], (list, tuple)):
+                    sampler[k_out] = ins[k_in]
+        if _is_link(ins.get("positive")):
+            positive += _follow_text(nodes, str(ins["positive"][0]), int(ins["positive"][1]))
+        if _is_link(ins.get("negative")):
+            negative += _follow_text(nodes, str(ins["negative"][0]), int(ins["negative"][1]))
+    # 尺寸
+    for nid, node in nodes.items():
+        if node.get("class_type", "").startswith("EmptyLatent") or node.get("class_type") in (
+                "EmptySD3LatentImage", "EmptyLatentImagePresets", "EmptyImage"):
+            ins = node.get("inputs", {}) or {}
+            if ins.get("width") and ins.get("height"):
+                sampler.setdefault("width", ins.get("width"))
+                sampler.setdefault("height", ins.get("height"))
+                if ins.get("batch_size") and ins["batch_size"] != 1:
+                    sampler["batch_size"] = ins["batch_size"]
+                break
+
+    def _dedup(seq: List[str]) -> List[str]:
+        out: List[str] = []
+        for s in seq:
+            if s and s not in out:
+                out.append(s)
+        return out
+
+    pos = _dedup(positive)
+    neg = _dedup(negative)
+    emb = sorted({m.group(1) for t in pos + neg for m in re.finditer(r"embedding:([\w\.\-]+)", t, re.I)})
+    return {
+        "tool": "ComfyUI",
+        "models": [{"kind": k, "name": n} for k, names in kinds.items() for n in names],
+        "loras": loras,
+        "kinds": kinds,
+        "positive": "\n".join(pos),
+        "negative": "\n".join(neg),
+        "embeddings": emb,
+        "sampler": sampler,
+        "node_census": dict(sorted(census.items(), key=lambda kv: -kv[1])),
+        "total_nodes": len(nodes),
+    }
+
+
+A1111_RE = re.compile(r"^([^:]+):\s*(.+)$", re.M)
+LORA_TAG = re.compile(r"<lora:([^:>]+)(?::([-\d\.]+))?(?::([-\d\.]+))?>", re.I)
+
+
+def parse_a1111(text: str) -> Dict[str, Any]:
+    lines = text.replace("\r\n", "\n")
+    neg = ""
+    m = re.search(r"\nNegative prompt:\s*(.*?)(?=\n[A-Z][\w ]*:|\Z)", lines, re.S)
+    if m:
+        neg = m.group(1).strip()
+        pos = lines[:m.start()].strip()
+    else:
+        cut = re.search(r"\n[A-Z][\w ]*:\s", lines)
+        pos = (lines[:cut.start()] if cut else lines).strip()
+    meta_line = lines[m.end():] if m else (lines[cut.start():] if cut else "")
+    if not meta_line:
+        meta_line = "\n".join(l for l in lines.split("\n") if re.match(r"^\s*(Steps|Sampler|CFG scale|Seed|Size|Model|Model hash|Denoising|Clip skip|ENSD|Hires upscale|VAE):", l))
+    fields: Dict[str, str] = {}
+    # A1111 的采样参数都挤在同一行：按「键: 值」逐段切（值里可能有引号包住的逗号）
+    for fm in re.finditer(r'([A-Za-z][A-Za-z0-9 _\-]*):\s*("[^"]*"|[^,]*)(?:,\s*|$)', meta_line):
+        k = fm.group(1).strip()
+        v = fm.group(2).strip().strip('"')
+        if k and v and k not in fields and not k.lower().startswith(("negative prompt",)):
+            fields[k] = v
+    loras = []
+    for name, sw, sc in LORA_TAG.findall(pos + " " + neg):
+        loras.append({"name": name.strip(), "strength_model": float(sw) if sw else None,
+                      "strength_clip": float(sc) if sc else None, "node": "prompt"})
+    if "Lora hashes" in fields:
+        for pair in fields["Lora hashes"].split(","):
+            nm = pair.split(":")[0].strip().strip('"')
+            if nm and not any(l["name"] == nm for l in loras):
+                loras.append({"name": nm, "strength_model": None, "strength_clip": None, "node": "Lora hashes"})
+    sampler: Dict[str, Any] = {}
+    for src, dst in (("Steps", "steps"), ("Sampler", "sampler_name"), ("CFG scale", "cfg"), ("Seed", "seed"),
+                     ("Denoising strength", "denoise"), ("Schedule type", "scheduler"), ("Clip skip", "clip_skip")):
+        if src in fields:
+            val = fields[src]
+            try:
+                sampler[dst] = float(val) if "." in val else int(val)
+            except ValueError:
+                sampler[dst] = val
+    if "Size" in fields:
+        mm = re.match(r"(\d+)\s*x\s*(\d+)", fields["Size"])
+        if mm:
+            sampler["width"], sampler["height"] = int(mm.group(1)), int(mm.group(2))
+    models = []
+    for src, kind in (("Model", "Checkpoint"), ("Model hash", "Checkpoint hash"), ("VAE", "VAE"),
+                      ("VAE hash", "VAE hash")):
+        if src in fields:
+            models.append({"kind": kind, "name": fields[src]})
+    emb = sorted({m.group(1) for m in re.finditer(r"embedding:([\w\.\-]+)", pos + " " + neg, re.I)})
+    return {"tool": "A1111 / Forge / SD.Next", "models": models, "loras": loras, "kinds": {},
+            "positive": pos, "negative": neg, "embeddings": emb, "sampler": sampler,
+            "node_census": {}, "total_nodes": 0, "fields": fields}
+
+
+def read_params(path: str | Path) -> Dict[str, Any]:
+    """主入口：返回结构化结果（含原始元数据摘要）。"""
+    path = Path(path)
+    raw = raw_metadata(path)
+    res: Dict[str, Any] = {
+        "ok": False, "file": {
+            "name": path.name, "path": str(path), "bytes": path.stat().st_size if path.exists() else 0,
+            "format": raw.get("format", ""), "w": (raw.get("size") or [0, 0])[0], "h": (raw.get("size") or [0, 0])[1],
+            "mode": raw.get("mode", ""),
+        },
+        "tool": "未检测到生成参数", "models": [], "loras": [], "kinds": {}, "positive": "", "negative": "",
+        "embeddings": [], "sampler": {}, "node_census": {}, "total_nodes": 0,
+        "meta_keys": raw.get("keys", []), "notes": [], "raw": {},
+    }
+    text = raw.get("text", {}) or {}
+    exif = raw.get("exif", {}) or {}
+
+    parameters = text.get("parameters") or ""
+    workflow_json = text.get("workflow") or ""
+    uc = exif.get("UserComment") or exif.get("ImageDescription") or ""
+
+    # 收集所有可能的 ComfyUI prompt 候选，挑「可解析出节点最多」的那个（EXIF / tEXt / xmp / 字节兜底）
+    candidates: List[tuple] = []
+    if text.get("prompt"):
+        candidates.append(("tEXt prompt", text["prompt"]))
+    if uc and "class_type" in uc:
+        candidates.append(("EXIF UserComment", uc[uc.find("{"):]))
+    if raw.get("xmp") and "class_type" in raw["xmp"]:
+        candidates.append(("XMP", raw["xmp"][raw["xmp"].find("{"):]))
+    if raw.get("byte_json"):
+        candidates.append(("字节兜底", raw["byte_json"]))
+
+    prompt_json, parsed = "", None
+    for src, cand in candidates:
+        got = parse_comfy(cand)
+        n = got.get("total_nodes") or 0
+        if not got.get("error") and n and (parsed is None or n > (parsed.get("total_nodes") or 0)):
+            prompt_json, parsed = cand, got
+            parsed["source"] = src
+    if parsed is None and candidates:
+        parsed = parse_comfy(candidates[0][1])
+
+    if not parameters and uc and "Steps:" in uc and "class_type" not in uc:
+        parameters = uc
+
+    if parsed and not parsed.get("error"):
+        res.update({k: v for k, v in parsed.items() if k != "kinds"})
+        res["kinds"] = parsed.get("kinds", {})
+        res["meta_source"] = parsed.get("source", "")
+        res["ok"] = True
+    elif parsed:
+        res["notes"].append(parsed["error"])
+    if not res["ok"] and parameters:
+        parsed2 = parse_a1111(parameters)
+        res.update({k: v for k, v in parsed2.items() if k != "kinds"})
+        res["kinds"] = {}
+        res["ok"] = True
+        res["meta_source"] = "parameters 文本"
+
+    if res["ok"]:
+        res["tool"] = "ComfyUI" if "class_type" in (prompt_json or "") else res["tool"]
+    # 元数据里有哪些键、多大，方便排错
+    res["raw"] = {
+        "prompt": (prompt_json[:200000] if prompt_json else ""),
+        "workflow": (workflow_json[:200000] if workflow_json else ""),
+        "parameters": parameters[:20000],
+        "exif_keys": list(exif.keys()),
+    }
+    if not prompt_json and not workflow_json and not parameters and not exif:
+        res["notes"].append("这张图没有任何生成元数据（可能是截图、手绘图，或导出时被平台抹掉了 EXIF）")
+    if not workflow_json and res["tool"] == "ComfyUI":
+        res["notes"].append("只有 API prompt（可解析），没有 UI workflow")
+    return res

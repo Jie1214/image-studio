@@ -105,6 +105,23 @@ textarea.input{resize:vertical;font:13px/1.6 ui-monospace,Consolas,monospace}
 .cmp-side figcaption{font-size:12.5px;color:var(--dim);padding:4px 0}
 .cmp-side img{width:100%;background:#fff;border-radius:10px}
 
+/* 读图参数面板 */
+.drop.sm{padding:12px;font-size:13.5px}
+.meta-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+@media (max-width:900px){ .meta-grid{grid-template-columns:minmax(0,1fr)} }
+.meta-file{padding:8px 0 10px;font-size:13.5px;border-bottom:1px dashed var(--line)}
+.meta-sec{margin:12px 0}
+.meta-sec h4{margin:0 0 6px;font-size:13px;color:var(--gold2);font-weight:600;display:flex;align-items:center;gap:8px}
+.meta-kv{display:flex;flex-wrap:wrap;gap:6px}
+.meta-kv .tag b{color:var(--fg)}
+.tbl.mini td,.tbl.mini th{padding:4px 8px;font-size:12.5px}
+pre.out{background:#16161d;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:0;
+  white-space:pre-wrap;word-break:break-word;max-height:280px;overflow:auto;font:12.5px/1.7 ui-monospace,Consolas,monospace;color:#dfe3ea}
+.notes{margin:0;padding-left:18px;color:var(--warn);font-size:12.5px}
+details.meta-raw{margin-top:10px}
+details.meta-raw summary{cursor:pointer;color:var(--dim);font-size:13px}
+details.meta-raw summary:hover{color:var(--gold)}
+
 /* 提示 */
 .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:#2a2a36;border:1px solid var(--line);
   color:var(--fg);padding:9px 16px;border-radius:10px;z-index:99;box-shadow:0 8px 26px #0008;font-size:13.5px}

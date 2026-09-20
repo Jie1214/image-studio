@@ -162,6 +162,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"ok": False, "error": "任务不存在"}, 404)
                 job.cancel = True
                 return self._json({"ok": True, "job": job.snapshot()})
+            if path == "/api/meta":
+                b = self._json_body()
+                p = b.get("path") or ""
+                if not (Path(p).is_file() if p else False):
+                    return self._json({"ok": False, "error": "文件不存在"}, 404)
+                if not self._allowed(p):
+                    return self._json({"ok": False, "error": "路径不在允许范围"}, 403)
+                from .metadata import read_params
+                return self._json({"ok": True, "meta": read_params(p)})
             if path == "/api/reveal":
                 b = self._json_body()
                 target = b.get("path") or str(output_dir())

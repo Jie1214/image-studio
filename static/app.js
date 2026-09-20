@@ -125,7 +125,7 @@
         + '<td class="mono">' + dims + '</td>'
         + '<td>' + esc((r && r.out_format) || f.format || '') + '</td>'
         + '<td>' + st + '</td>'
-        + '<td><button class="btn sm" data-act="cmp">对比</button></td>'
+        + '<td><button class="btn sm" data-act="cmp">对比</button> <button class="btn sm" data-act="meta" title="读这张图的生成参数（模型/LoRA/提示词）">参数</button></td>'
         + '</tr>';
     }).join('');
     const bytes = state.files.reduce((a, f) => a + (f.bytes || 0), 0);
@@ -339,6 +339,126 @@
     estTimer = setTimeout(estimate, 550);
   }
 
+  /* ---------------- 读图参数（模型 / LoRA / 提示词） ---------------- */
+  function metaReport(m) {
+    const L = [];
+    L.push('# 图片生成参数报告');
+    L.push('');
+    L.push('- 文件：' + m.file.name + '（' + m.file.w + '×' + m.file.h + '，' + fmtBytes(m.file.bytes) + '，' + (m.file.format || '') + '）');
+    L.push('- 生成工具：' + m.tool + (m.meta_source ? '（元数据来源：' + m.meta_source + '）' : ''));
+    if (m.models.length) {
+      L.push('', '## 模型');
+      m.models.forEach(x => L.push('- ' + x.kind + '：' + x.name));
+    }
+    if (m.loras.length) {
+      L.push('', '## LoRA');
+      m.loras.forEach(x => L.push('- ' + x.name + '（权重 model=' + (x.strength_model ?? '-') + ', clip=' + (x.strength_clip ?? '-') + '）'));
+    }
+    const kinds = Object.keys(m.kinds || {});
+    if (kinds.length) {
+      L.push('', '## 其他资源');
+      kinds.forEach(k => L.push('- ' + k + '：' + (m.kinds[k] || []).join('、')));
+    }
+    if (m.embeddings && m.embeddings.length) L.push('', '## Textual Inversion', m.embeddings.map(e => '- ' + e).join('\n'));
+    if (Object.keys(m.sampler || {}).length) {
+      L.push('', '## 采样参数');
+      Object.entries(m.sampler).forEach(([k, v]) => L.push('- ' + k + ': ' + v));
+    }
+    if (m.positive) L.push('', '## 正向提示词', '', '```', m.positive, '```');
+    if (m.negative) L.push('', '## 负向提示词', '', '```', m.negative, '```');
+    if (m.notes && m.notes.length) L.push('', '## 提示', m.notes.map(n => '- ' + n).join('\n'));
+    return L.join('\n');
+  }
+
+  function renderMeta(m) {
+    state.meta = m;
+    const f = m.file;
+    const ok = m.ok;
+    const kv = (o) => Object.entries(o || {}).filter(([, v]) => v !== null && v !== undefined && v !== '')
+      .map(([k, v]) => '<span class="tag">' + esc(k) + ' <b>' + esc(v) + '</b></span>').join(' ');
+    const models = (m.models || []).map(x => '<tr><td>' + esc(x.kind) + '</td><td class="mono">' + esc(x.name) + '</td></tr>').join('');
+    const loras = (m.loras || []).map(x => '<tr><td class="mono">' + esc(x.name) + '</td><td>' + (x.strength_model ?? '-') + '</td><td>' + (x.strength_clip ?? '-') + '</td></tr>').join('');
+    const kinds = Object.keys(m.kinds || {})
+      .filter(k => !/^(Checkpoint|UNet|LoRA)/.test(k))       // 已在上面的「模型 / LoRA」表里列过，不重复
+      .map(k => '<tr><td>' + esc(k) + '</td><td class="mono">' + esc((m.kinds[k] || []).join('、')) + '</td></tr>').join('');
+    const census = Object.entries(m.node_census || {}).slice(0, 14)
+      .map(([k, v]) => '<span class="tag">' + esc(k) + ' ×' + v + '</span>').join(' ');
+
+    $('#meta-panel').hidden = false;
+    $('#meta-panel').innerHTML = ''
+      + '<div class="meta-grid">'
+      + '  <div>'
+      + '    <div class="meta-file"><b>' + esc(f.name) + '</b> · ' + f.w + '×' + f.h + ' · ' + fmtBytes(f.bytes)
+      + ' · ' + esc(f.format || '') + ' · <span class="' + (ok ? 'good' : 'warn') + '">' + esc(m.tool) + '</span>'
+      + (m.meta_source ? ' <span class="tag">来源：' + esc(m.meta_source) + '</span>' : '') + '</div>'
+      + (models ? '    <div class="meta-sec"><h4>模型（' + m.models.length + '）</h4><table class="tbl mini">' + models + '</table></div>' : '')
+      + (loras ? '    <div class="meta-sec"><h4>LoRA（' + m.loras.length + '）</h4><table class="tbl mini"><thead><tr><th>名称</th><th>model 权重</th><th>clip 权重</th></tr></thead>' + loras + '</table></div>' : '')
+      + (kinds ? '    <div class="meta-sec"><h4>其他资源</h4><table class="tbl mini">' + kinds + '</table></div>' : '')
+      + ((m.embeddings || []).length ? '    <div class="meta-sec"><h4>Embedding</h4><div>' + m.embeddings.map(e => '<span class="tag">' + esc(e) + '</span>').join(' ') + '</div></div>' : '')
+      + (Object.keys(m.sampler || {}).length ? '    <div class="meta-sec"><h4>采样参数</h4><div class="meta-kv">' + kv(m.sampler) + '</div></div>' : '')
+      + (m.total_nodes ? '    <div class="meta-sec"><h4>节点构成（共 ' + m.total_nodes + ' 个）</h4><div class="meta-kv">' + census + '</div></div>' : '')
+      + '  </div>'
+      + '  <div>'
+      + '    <div class="meta-sec"><h4>正向提示词 <button class="btn sm" id="meta-copy-pos">复制</button></h4><pre class="out">' + esc(m.positive || '（这张图没有正向提示词）') + '</pre></div>'
+      + '    <div class="meta-sec"><h4>负向提示词 <button class="btn sm" id="meta-copy-neg">复制</button></h4><pre class="out">' + esc(m.negative || '（没有负向提示词）') + '</pre></div>'
+      + '    ' + ((m.notes || []).length ? '<div class="meta-sec"><h4>提示</h4><ul class="notes">' + m.notes.map(n => '<li>' + esc(n) + '</li>').join('') + '</ul></div>' : '')
+      + '    <details class="meta-raw"><summary>原始元数据（点开可复制给其它工具）</summary>'
+      + '      <div class="hint">容器里带的键：' + esc((m.meta_keys || []).join('、') || '无') + '</div>'
+      + '      <pre class="out">' + esc(m.raw && m.raw.prompt ? m.raw.prompt : (m.raw && m.raw.parameters ? m.raw.parameters : '（无）')) + '</pre>'
+      + '    </details>'
+      + '  </div>'
+      + '</div>';
+    if (m.positive) $('#meta-copy-pos').onclick = () => copyText(m.positive, '正向提示词');
+    if (m.negative) $('#meta-copy-neg').onclick = () => copyText(m.negative, '负向提示词');
+    const dl = $('#meta-dl');
+    try {
+      const blob = new Blob([metaReport(m)], { type: 'text/markdown;charset=utf-8' });
+      if (dl._url) URL.revokeObjectURL(dl._url);
+      dl._url = URL.createObjectURL(blob);
+      dl.href = dl._url;
+      dl.download = (f.name.replace(/\.[^.]+$/, '') || 'image') + '_参数报告.md';
+      dl.hidden = false;
+    } catch (e) { dl.hidden = true; }
+  }
+
+  async function copyText(t, what) {
+    try {
+      await navigator.clipboard.writeText(t);
+      toast('已复制' + what + '（' + t.length + ' 字符）');
+    } catch (e) {
+      const ta = document.createElement('textarea');
+      ta.value = t; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); toast('已复制' + what); } catch (e2) { toast('复制失败，请手动选中'); }
+      ta.remove();
+    }
+  }
+
+  async function readMeta(path, scroll) {
+    const panel = $('#meta-panel');
+    panel.hidden = false;
+    panel.innerHTML = '<div class="hint" style="padding:10px">正在读取元数据…</div>';
+    try {
+      const j = await api('/api/meta', { method: 'POST', body: { path: path } });
+      renderMeta(j.meta);
+      if (scroll) $('#card-meta').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (!j.meta.ok) toast('这张图没有生成参数（' + (j.meta.notes[0] || '') + '）', 5200);
+    } catch (e) {
+      panel.innerHTML = '<div class="hint" style="padding:10px">读取失败：' + esc(e.message) + '</div>';
+    }
+  }
+
+  async function uploadAndReadMeta(file) {
+    if (!file) return;
+    try {
+      const fd = new FormData();
+      fd.append('files', file, file.webkitRelativePath || file.name);
+      const j = await api('/api/upload', { method: 'POST', body: fd });
+      const f = (j.files || [])[0];
+      addFiles(j.files || []);
+      if (f) await readMeta(f.path, true);
+    } catch (e) { toast('上传失败：' + e.message, 4200); }
+  }
+
   /* ---------------- 设置 ---------------- */
   async function openSettings() {
     const j = await api('/api/config');
@@ -395,6 +515,16 @@
       uploadFiles(e.target.files);
     };
     $('#btn-scan').onclick = doScan;
+    // 读图参数：拖一张图 / 选一张图 → 上传后直接解析
+    const md = $('#metadrop');
+    ['dragenter', 'dragover'].forEach(ev => md.addEventListener(ev, e => { e.preventDefault(); md.classList.add('hot'); }));
+    ['dragleave', 'drop'].forEach(ev => md.addEventListener(ev, e => { e.preventDefault(); md.classList.remove('hot'); }));
+    md.addEventListener('drop', async e => {
+      const files = await entriesFromDataTransfer(e.dataTransfer);
+      if (files && files.length) uploadAndReadMeta(files[0]);
+    });
+    $('#btn-meta-pick').onclick = () => $('#meta-input').click();
+    $('#meta-input').onchange = e => uploadAndReadMeta(e.target.files[0]);
     $('#btn-clear').onclick = () => { state.files = []; renderTable(); $('#progress').hidden = true; $('#bar').style.width = '0'; $('#job-hint').textContent = '已清空'; };
     $('#recent-roots').onclick = e => { const b = e.target.closest('button'); if (b) { $('#scan-dir').value = b.dataset.dir; doScan(); } };
     $('#scan-dir').addEventListener('keydown', e => { if (e.key === 'Enter') doScan(); });
@@ -420,7 +550,9 @@
     $('#tbody').onclick = e => {
       const tr = e.target.closest('tr'); if (!tr) return;
       const f = state.files[+tr.dataset.i]; if (!f) return;
-      if (e.target.dataset.act === 'cmp' || e.target.classList.contains('thumb')) {
+      const act = e.target.dataset.act;
+      if (act === 'meta') { readMeta(f.path, true); return; }
+      if (act === 'cmp' || e.target.classList.contains('thumb')) {
         openCompare(f);
       }
     };

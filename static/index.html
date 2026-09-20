@@ -168,6 +168,24 @@
       </table>
     </div>
   </section>
+
+  <!-- ④ 读图参数 -->
+  <section class="card" id="card-meta">
+    <div class="card-head">
+      <span class="ttl">④ 读图参数（模型 / LoRA / 提示词）</span>
+      <span class="hint">ComfyUI 会把整个工作流写进图片元数据；拖一张图进来，或点上方结果表里任意一行的「参数」按钮</span>
+      <span class="spacer"></span>
+      <a class="btn" id="meta-dl" hidden download>⬇ 保存这份报告</a>
+    </div>
+    <div class="drop sm" id="metadrop">
+      <div>把一张图拖到这里（或点右边按钮）</div>
+      <div class="row center">
+        <button class="btn" id="btn-meta-pick">选择图片</button>
+        <input type="file" id="meta-input" accept="image/*" hidden>
+      </div>
+    </div>
+    <div id="meta-panel" hidden></div>
+  </section>
 </main>
 
 <!-- 对比弹窗 -->
