@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>图像工坊 · 批量压缩</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="dot"></span>图像工坊 <span class="ver">批量压缩 v1.0</span></div>
+  <div class="spacer"></div>
+  <div class="stat" id="hdr-stat">—</div>
+  <button class="btn ghost" id="btn-settings">⚙ 设置</button>
+</header>
+
+<main>
+  <!-- ① 来源 -->
+  <section class="card">
+    <div class="card-head">
+      <span class="ttl">① 图片来源</span>
+      <span class="hint">支持拖拽多张 / 整个文件夹 · 也可以让服务端直接扫描目录（几万张也不用手动选）</span>
+    </div>
+    <div class="drop" id="drop">
+      <div class="drop-ico">🖼️</div>
+      <div>把图片或文件夹拖到这里（可多选）</div>
+      <div class="row center">
+        <button class="btn primary" id="btn-pick">选择文件</button>
+        <input type="file" id="file-input" multiple accept="image/*" hidden>
+      </div>
+    </div>
+    <div class="row scanrow">
+      <input class="input grow" id="scan-dir" placeholder="或填写要扫描的目录，例如 D:\照片\2026 旅行">
+      <label class="chk"><input type="checkbox" id="scan-rec" checked> 含子文件夹</label>
+      <button class="btn" id="btn-scan">扫描该目录</button>
+      <button class="btn ghost" id="btn-clear">清空列表</button>
+    </div>
+    <div class="recent" id="recent-roots"></div>
+  </section>
+
+  <!-- ② 参数 -->
+  <section class="card">
+    <div class="card-head">
+      <span class="ttl">② 压缩参数</span>
+      <span class="hint" id="est-hint">调整参数时会对列表第一张做实时估算</span>
+    </div>
+    <div class="row">
+      <span class="lab">预设</span>
+      <div class="seg" id="presets">
+        <button class="segb" data-preset="web">网页分享</button>
+        <button class="segb" data-preset="max">最大压缩</button>
+        <button class="segb" data-preset="near">接近无损</button>
+        <button class="segb active" data-preset="keep">保持原格式</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <label class="lab-col">目标格式
+        <select class="input" id="f-format">
+          <option value="keep">保持原格式</option>
+          <option value="WEBP">WebP（体积最小）</option>
+          <option value="JPEG">JPEG</option>
+          <option value="PNG">PNG</option>
+          <option value="AVIF">AVIF（最省，编码慢）</option>
+        </select>
+      </label>
+
+      <label class="lab-col">压缩方式
+        <select class="input" id="f-mode">
+          <option value="quality">按质量（滑块）</option>
+          <option value="target">按体积（自动找最高画质）</option>
+        </select>
+      </label>
+
+      <label class="lab-col" id="wrap-quality">质量 <b id="v-quality">78</b>
+        <input type="range" class="range" id="f-quality" min="1" max="100" value="78">
+      </label>
+
+      <label class="lab-col" id="wrap-target" hidden>目标体积（每张 KB）
+        <input class="input" type="number" id="f-target" min="1" value="200">
+      </label>
+
+      <label class="lab-col">缩放
+        <select class="input" id="f-resize">
+          <option value="none">不缩放</option>
+          <option value="long">按长边</option>
+          <option value="percent">按百分比</option>
+          <option value="box">放进指定框</option>
+        </select>
+      </label>
+
+      <label class="lab-col" id="wrap-long" hidden>长边像素
+        <input class="input" type="number" id="f-long" min="16" value="1920">
+      </label>
+      <label class="lab-col" id="wrap-percent" hidden>百分比（%）
+        <input class="input" type="number" id="f-percent" min="1" max="400" value="100">
+      </label>
+      <label class="lab-col" id="wrap-box" hidden>框宽 × 高
+        <div class="row tight">
+          <input class="input" type="number" id="f-boxw" min="16" value="1920">
+          <input class="input" type="number" id="f-boxh" min="16" value="1080">
+        </div>
+      </label>
+
+      <label class="lab-col">尺寸对齐
+        <select class="input" id="f-align">
+          <option value="0">不对齐</option>
+          <option value="2">2 的倍数</option>
+          <option value="8">8 的倍数</option>
+          <option value="16">16 的倍数</option>
+          <option value="32">32 的倍数</option>
+          <option value="64">64 的倍数</option>
+        </select>
+      </label>
+
+      <label class="lab-col">PNG 调色板量化
+        <select class="input" id="f-pngcolors">
+          <option value="0">不量化（无损）</option>
+          <option value="256">256 色</option>
+          <option value="128">128 色</option>
+          <option value="64">64 色</option>
+          <option value="32">32 色</option>
+        </select>
+      </label>
+
+      <label class="lab-col">并行线程
+        <input class="input" type="number" id="f-workers" min="1" max="16" value="4">
+      </label>
+    </div>
+
+    <div class="row wrap">
+      <label class="chk"><input type="checkbox" id="f-lossless"> 无损模式（PNG/WebP/AVIF）</label>
+      <label class="chk"><input type="checkbox" id="f-meta"> 保留 EXIF/ICC 元数据</label>
+      <label class="chk"><input type="checkbox" id="f-skip" checked> 压完不比原图小就保留原文件</label>
+      <label class="chk"><input type="checkbox" id="f-shrink" checked> 目标体积模式下允许适度缩分辨率</label>
+    </div>
+  </section>
+
+  <!-- ③ 结果 -->
+  <section class="card">
+    <div class="card-head">
+      <span class="ttl">③ 批量结果</span>
+      <span class="hint" id="job-hint">还没有任务</span>
+      <span class="spacer"></span>
+      <button class="btn primary" id="btn-run">🚀 开始压缩</button>
+      <button class="btn ghost" id="btn-cancel" hidden>停止</button>
+      <a class="btn" id="btn-zip" hidden>⬇ 下载全部（ZIP）</a>
+      <button class="btn ghost" id="btn-open">📂 打开输出目录</button>
+    </div>
+    <div class="progress" id="progress" hidden><div class="bar" id="bar"></div></div>
+    <div class="summary" id="summary">—</div>
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th style="width:64px">预览</th><th>文件名</th><th style="width:150px">体积</th>
+            <th style="width:78px">节省</th><th style="width:120px">尺寸</th>
+            <th style="width:76px">格式</th><th style="width:90px">状态</th><th style="width:96px">操作</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="8" class="empty">列表为空：先拖入图片，或填目录后点「扫描该目录」</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<!-- 对比弹窗 -->
+<div class="modal" id="cmp-modal" hidden>
+  <div class="modal-box wide">
+    <div class="modal-head">
+      <b id="cmp-title">对比</b>
+      <span class="spacer"></span>
+      <button class="segb active" id="cmp-mode-slider">滑动对比</button>
+      <button class="segb" id="cmp-mode-side">并排对比</button>
+      <button class="btn ghost sm" id="cmp-close">✕</button>
+    </div>
+    <div class="cmp-info" id="cmp-info"></div>
+    <div class="cmp-wrap" id="cmp-wrap">
+      <div class="cmp" id="cmp">
+        <img id="cmp-src" alt="原图">
+        <div class="cmp-top" id="cmp-top"><img id="cmp-dst" alt="压缩后"></div>
+        <div class="cmp-handle" id="cmp-handle"></div>
+      </div>
+      <div class="cmp-side" id="cmp-side" hidden>
+        <figure><figcaption>原图</figcaption><img id="cmp-src2"></figure>
+        <figure><figcaption>压缩后</figcaption><img id="cmp-dst2"></figure>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <span class="hint">拖动中间的竖线左右对比；放大细看请点「并排对比」或另存后用看图软件</span>
+      <span class="spacer"></span>
+      <a class="btn" id="cmp-dl" download>⬇ 下载这张</a>
+    </div>
+  </div>
+</div>
+
+<!-- 设置弹窗 -->
+<div class="modal" id="set-modal" hidden>
+  <div class="modal-box">
+    <div class="modal-head"><b>设置</b><span class="spacer"></span><button class="btn ghost sm" id="set-close">✕</button></div>
+    <div class="modal-body">
+      <label class="lab-col">可扫描目录（一行一个，界面里能直接填的目录只有这些）
+        <textarea class="input" id="s-roots" rows="4" placeholder="例如 D:\照片"></textarea>
+      </label>
+      <label class="lab-col">输出目录（留空 = 项目下的 output）
+        <input class="input" id="s-out" placeholder="例如 D:\图片输出">
+      </label>
+      <div class="row">
+        <label class="lab-col grow">默认并行线程
+          <input class="input" type="number" id="s-workers" min="1" max="16">
+        </label>
+        <label class="lab-col grow">端口
+          <input class="input" type="number" id="s-port" min="1" max="65535">
+        </label>
+      </div>
+      <label class="lab-col">扫描扩展名（逗号分隔）
+        <input class="input" id="s-exts" placeholder="jpg,jpeg,png,webp,avif,bmp,tif,tiff,gif">
+      </label>
+      <div class="hint" id="s-note"></div>
+    </div>
+    <div class="modal-foot">
+      <span class="spacer"></span>
+      <button class="btn primary" id="set-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

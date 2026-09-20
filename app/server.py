@@ -1,0 +1,310 @@
+# -*- coding: utf-8 -*-
+"""HTTP 服务（只用标准库）：静态页 + 扫描 / 上传 / 预览 / 批量压缩 / 缩略图 / 打包下载。"""
+from __future__ import annotations
+
+import json
+import mimetypes
+import os
+import queue
+import shutil
+import threading
+import time
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from . import (PROJECT_DIR, ensure_config_file, load_config, output_dir, save_config,
+               thumb_dir, upload_dir)
+from .imaging import Settings, compress_file, make_thumb, open_image
+from .jobs import get_job, scan_dir, start_job, zip_results
+
+STATIC_DIR = PROJECT_DIR / "static"
+JSON_LIMIT = 200 * 1024 * 1024
+
+
+def _json_default(o):
+    return str(o)
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "ImageStudio/1.0"
+    protocol_version = "HTTP/1.1"
+
+    # ---------------- 基础工具 ----------------
+    def log_message(self, fmt, *args):        # 安静点：只记错误
+        if str(args[1] if len(args) > 1 else "").startswith(("4", "5")):
+            print("[http] %s - %s" % (self.address_string(), fmt % args))
+
+    def _send(self, code: int, body: bytes, ctype: str = "application/octet-stream",
+              extra: Optional[Dict[str, str]] = None) -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def _json(self, data: Any, code: int = 200) -> None:
+        self._send(code, json.dumps(data, ensure_ascii=False, default=_json_default).encode("utf-8"),
+                   "application/json; charset=utf-8")
+
+    def _body(self) -> bytes:
+        n = int(self.headers.get("Content-Length") or 0)
+        if n <= 0:
+            return b""
+        if n > JSON_LIMIT:
+            raise ValueError("请求体过大")
+        return self.rfile.read(n)
+
+    def _json_body(self) -> Dict[str, Any]:
+        raw = self._body()
+        if not raw:
+            return {}
+        return json.loads(raw.decode("utf-8", "replace"))
+
+    def _query(self) -> Dict[str, str]:
+        q = urllib.parse.urlparse(self.path).query
+        return {k: v[0] for k, v in urllib.parse.parse_qs(q).items()}
+
+    # ---------------- 路径白名单 ----------------
+    def _allowed(self, path: str) -> bool:
+        try:
+            p = Path(path).resolve()
+        except Exception:
+            return False
+        cfg = load_config()
+        roots = [Path(r).resolve() for r in (cfg.get("input_roots") or []) if str(r).strip()]
+        roots += [output_dir().resolve(), upload_dir().resolve(), thumb_dir().resolve(),
+                  (PROJECT_DIR / "work").resolve()]
+        for r in roots:
+            try:
+                p.relative_to(r)
+                return True
+            except ValueError:
+                continue
+        return False
+
+    # ---------------- GET ----------------
+    def do_GET(self):      # noqa: N802
+        path = urllib.parse.urlparse(self.path).path
+        try:
+            if path in ("/", "/index.html"):
+                return self._static("index.html")
+            if path.startswith("/static/"):
+                return self._static(path[len("/static/"):])
+            if path == "/api/config":
+                return self._json({"ok": True, "config": load_config(), "project": str(PROJECT_DIR),
+                                   "output_dir": str(output_dir())})
+            if path == "/api/thumb":
+                return self._thumb()
+            if path == "/api/file":
+                return self._file()
+            if path == "/api/job":
+                job = get_job(self._query().get("id", ""))
+                if not job:
+                    return self._json({"ok": False, "error": "任务不存在"}, 404)
+                return self._json({"ok": True, "job": job.snapshot()})
+            if path == "/api/zip":
+                job = get_job(self._query().get("id", ""))
+                if not job:
+                    return self._json({"ok": False, "error": "任务不存在"}, 404)
+                z = zip_results(job)
+                if not z:
+                    return self._json({"ok": False, "error": "没有可打包的产物"}, 400)
+                data = Path(z).read_bytes()
+                name = urllib.parse.quote(Path(z).name)
+                return self._send(200, data, "application/zip",
+                                  {"Content-Disposition": "attachment; filename*=UTF-8''%s" % name})
+            if path == "/api/stats":
+                cfg = load_config()
+                od = output_dir()
+                n = sum(1 for _ in od.rglob("*") if _.is_file()) if od.exists() else 0
+                return self._json({"ok": True, "output_dir": str(od), "output_files": n,
+                                   "workers": cfg.get("workers"), "roots": cfg.get("input_roots")})
+            return self._json({"ok": False, "error": "未知接口 %s" % path}, 404)
+        except Exception as exc:      # noqa: BLE001
+            return self._json({"ok": False, "error": "%s: %s" % (type(exc).__name__, exc)}, 500)
+
+    def do_POST(self):     # noqa: N802
+        path = urllib.parse.urlparse(self.path).path
+        try:
+            if path == "/api/config":
+                return self._json({"ok": True, "config": save_config(self._json_body())})
+            if path == "/api/scan":
+                b = self._json_body()
+                root = (b.get("dir") or "").strip()
+                if not root:
+                    return self._json({"ok": False, "error": "请填写目录"}, 400)
+                return self._json(scan_dir(root, bool(b.get("recursive", True))))
+            if path == "/api/upload":
+                return self._upload()
+            if path == "/api/preview":
+                return self._preview()
+            if path == "/api/compress":
+                b = self._json_body()
+                files = [f for f in (b.get("files") or []) if str(f).strip()]
+                if not files:
+                    return self._json({"ok": False, "error": "没有待处理文件"}, 400)
+                sub = b.get("subdir") or time.strftime("压缩_%Y%m%d-%H%M%S")
+                job = start_job(files, b.get("settings") or {}, out_dir=b.get("out_dir"),
+                                workers=b.get("workers"), subdir=sub)
+                return self._json({"ok": True, "job": job.snapshot()})
+            if path == "/api/cancel":
+                b = self._json_body()
+                job = get_job(b.get("id") or "")
+                if not job:
+                    return self._json({"ok": False, "error": "任务不存在"}, 404)
+                job.cancel = True
+                return self._json({"ok": True, "job": job.snapshot()})
+            if path == "/api/reveal":
+                b = self._json_body()
+                target = b.get("path") or str(output_dir())
+                p = Path(target)
+                if p.is_file():
+                    p = p.parent
+                if not p.exists():
+                    return self._json({"ok": False, "error": "目录不存在"}, 400)
+                try:
+                    os.startfile(str(p))       # Windows
+                    return self._json({"ok": True, "opened": str(p)})
+                except Exception as exc:       # noqa: BLE001
+                    return self._json({"ok": False, "error": str(exc)}, 500)
+            return self._json({"ok": False, "error": "未知接口 %s" % path}, 404)
+        except Exception as exc:      # noqa: BLE001
+            return self._json({"ok": False, "error": "%s: %s" % (type(exc).__name__, exc)}, 500)
+
+    # ---------------- 具体实现 ----------------
+    def _static(self, rel: str):
+        rel = rel.split("?")[0].replace("\\", "/").lstrip("/")
+        target = (STATIC_DIR / rel).resolve()
+        try:
+            target.relative_to(STATIC_DIR.resolve())
+        except ValueError:
+            return self._json({"ok": False, "error": "非法路径"}, 403)
+        if not target.exists() or not target.is_file():
+            return self._json({"ok": False, "error": "文件不存在 %s" % rel}, 404)
+        ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+        if ctype.startswith("text/") or ctype in ("application/javascript", "application/json"):
+            ctype += "; charset=utf-8"
+        return self._send(200, target.read_bytes(), ctype)
+
+    def _file(self):
+        q = self._query()
+        p = q.get("path", "")
+        if not p or not Path(p).is_file():
+            return self._json({"ok": False, "error": "文件不存在"}, 404)
+        if not self._allowed(p):
+            return self._json({"ok": False, "error": "该路径不在允许范围内（可在设置里把它加进「可扫描目录」）"}, 403)
+        f = Path(p)
+        ctype = mimetypes.guess_type(str(f))[0] or "application/octet-stream"
+        extra = {}
+        if q.get("dl"):
+            import urllib.parse as _up
+            extra["Content-Disposition"] = "attachment; filename*=UTF-8''%s" % _up.quote(f.name)
+        return self._send(200, f.read_bytes(), ctype, extra)
+
+    def _thumb(self):
+        q = self._query()
+        p = q.get("path", "")
+        box = int(q.get("w") or 320)
+        if not p or not Path(p).is_file():
+            return self._json({"ok": False, "error": "文件不存在"}, 404)
+        if not self._allowed(p):
+            return self._json({"ok": False, "error": "路径不在允许范围"}, 403)
+        f = Path(p)
+        key = "%s_%d_%d_%d" % (abs(hash(str(f))), f.stat().st_mtime, f.stat().st_size, box)
+        dst = thumb_dir() / (key + ".jpg")
+        if not dst.exists():
+            if make_thumb(f, dst, box=box) is None:
+                return self._json({"ok": False, "error": "缩略图生成失败"}, 500)
+        return self._send(200, dst.read_bytes(), "image/jpeg")
+
+    def _upload(self):
+        ct = self.headers.get("Content-Type") or ""
+        if "multipart/form-data" not in ct:
+            return self._json({"ok": False, "error": "需要 multipart/form-data"}, 400)
+        boundary = ct.split("boundary=", 1)[-1].strip().strip('"')
+        raw = self._body()
+        parts = _parse_multipart(raw, boundary)
+        sess = upload_dir() / time.strftime("%Y%m%d-%H%M%S")
+        sess.mkdir(parents=True, exist_ok=True)
+        saved: List[str] = []
+        for name, data in parts:
+            safe = Path(name).name
+            if not safe:
+                continue
+            dst = sess / safe
+            i = 1
+            while dst.exists():
+                dst = sess / ("%s_%d%s" % (Path(safe).stem, i, Path(safe).suffix))
+                i += 1
+            dst.write_bytes(data)
+            saved.append(str(dst))
+        from .jobs import probe
+        return self._json({"ok": True, "files": [probe(p) for p in saved], "dir": str(sess)})
+
+    def _preview(self):
+        b = self._json_body()
+        p = b.get("path") or ""
+        if not Path(p).is_file():
+            return self._json({"ok": False, "error": "文件不存在"}, 404)
+        if not self._allowed(p):
+            return self._json({"ok": False, "error": "路径不在允许范围"}, 403)
+        st = Settings.from_dict(b.get("settings") or {})
+        dst_dir = PROJECT_DIR / "work" / "previews"
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        r = compress_file(p, st, dst_dir, suffix="_预览", overwrite=True)
+        if not r.get("ok"):
+            return self._json({"ok": False, "error": r.get("error")}, 500)
+        return self._json({"ok": True, "result": r})
+
+    # 兼容某些客户端
+    def do_HEAD(self):     # noqa: N802
+        self.do_GET()
+
+
+def _parse_multipart(raw: bytes, boundary: str) -> List[tuple]:
+    """极简 multipart 解析：返回 [(filename, bytes), ...]（Python 3.13 已移除 cgi 模块）。"""
+    out: List[tuple] = []
+    if not boundary:
+        return out
+    sep = b"--" + boundary.encode("utf-8", "ignore")
+    chunks = raw.split(sep)
+    for ch in chunks:
+        ch = ch.strip(b"\r\n")
+        if not ch or ch.startswith(b"--"):
+            continue
+        head, _, body = ch.partition(b"\r\n\r\n")
+        if not _:
+            continue
+        headers = head.decode("utf-8", "replace").split("\r\n")
+        name = ""
+        for h in headers:
+            if h.lower().startswith("content-disposition") and "filename=" in h:
+                name = h.split("filename=")[-1].strip().strip('"')
+        if name:
+            out.append((name, body.rstrip(b"\r\n")))
+    return out
+
+
+def serve(host: str = "127.0.0.1", port: int = 8720) -> None:
+    ensure_config_file()
+    httpd = ThreadingHTTPServer((host, port), Handler)
+    httpd.daemon_threads = True
+    print("=" * 52)
+    print("  图像工坊已启动 → http://%s:%d" % (host, port))
+    print("  输出目录：%s" % output_dir())
+    print("  关闭这个窗口即停止服务")
+    print("=" * 52)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        httpd.server_close()

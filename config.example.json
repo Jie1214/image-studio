@@ -1,0 +1,24 @@
+{
+  "host": "127.0.0.1",
+  "port": 8720,
+  "workers": 4,
+  "input_roots": [],
+  "output_dir": "",
+  "exts": ["jpg", "jpeg", "png", "webp", "avif", "bmp", "tif", "tiff", "gif"],
+  "defaults": {
+    "format": "keep",
+    "quality": 78,
+    "mode": "quality",
+    "target_kb": 200,
+    "lossless": false,
+    "resize": "none",
+    "long_edge": 1920,
+    "percent": 100,
+    "box_w": 1920,
+    "box_h": 1080,
+    "align": 0,
+    "keep_metadata": false,
+    "png_colors": 0,
+    "skip_if_larger": true
+  }
+}

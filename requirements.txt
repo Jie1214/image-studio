@@ -1,0 +1,2 @@
+# Pillow 是唯一依赖（含 libjpeg-turbo / zlib / libwebp / libavif，四种编码器齐全）
+Pillow>=10.0
