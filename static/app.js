@@ -876,6 +876,15 @@
       try {
         await ensureDirAllowed(dir);       // 用户手写的目录自动进白名单，免得读取时被挡
         const j = await api('/api/scan', { method: 'POST', body: { dir: dir, recursive: $('#meta-scan-rec').checked } });
+        if (j && j.ok === false) {          // 目录不存在 / 被拒绝：别报成「没有图片」，并把失效的记忆清掉
+          toast('读取失败：' + (j.error || '未知错误'), 4600);
+          $('#meta-summary').textContent = '读取失败：' + (j.error || '');
+          if (String(j.error || '').indexOf('不存在') >= 0) {
+            try { localStorage.removeItem('is_meta_dir'); } catch (e) {}
+            metaState.lastDir = '';
+          }
+          return;
+        }
         metaState.lastDir = dir;
         try { localStorage.setItem('is_meta_dir', dir); } catch (e) {}
         if (!j.total) return toast('这个目录里没有图片');

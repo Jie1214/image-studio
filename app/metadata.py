@@ -10,10 +10,15 @@ from __future__ import annotations
 
 import json
 import re
+import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from PIL import Image
+
+# 有些图的 EXIF 段是截断的，Pillow 会往控制台刷 UserWarning；我们本来就是「尽力而为」地读元数据，
+# 读不到就算了，不需要污染运行窗口。
+warnings.filterwarnings("ignore", message=r".*Corrupt EXIF data.*", category=UserWarning)
 
 # 节点类名 → (归类, 取文件名的输入键)
 LOADER_MAP: Dict[str, tuple] = {
