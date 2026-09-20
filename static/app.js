@@ -124,7 +124,7 @@
           : '<span class="bad">失败</span>')
         : '<span class="tag">待处理</span>';
       return '<tr data-i="' + i + '">'
-        + '<td><img class="thumb" loading="lazy" src="/api/thumb?w=64&amp;path=' + encodeURIComponent(f.path) + '" alt=""></td>'
+        + '<td>' + thumbBox(f.path, 64) + '</td>'
         + '<td><div>' + esc(f.name) + '</div><div class="hint mono">' + esc(f.dir || '') + '</div></td>'
         + '<td>' + sizeCell + '</td>'
         + '<td>' + saved + '</td>'
@@ -350,7 +350,7 @@
 
   function metaRowItem(f, i) {
     const m = f.meta;
-    const thumb = '<img class="thumb" loading="lazy" src="/api/thumb?w=96&amp;path=' + encodeURIComponent(f.path) + '" alt="">';
+    const thumb = thumbBox(f.path, 96);
     const size = (f.w && f.h) ? ((f.w || 0) + '×' + (f.h || 0)) : '—';
     if (f.busy) {
       return '<tr data-i="' + i + '"><td>' + thumb + '</td><td class="fname">' + esc(f.name) + '</td>'
@@ -479,6 +479,12 @@
   }
 
   /* 详情左侧的大图：点图或按钮在「适应窗口 / 原始大小」之间切换 */
+  // 缩略图：上传缓存被清理后，列表里引用的老路径会 404 —— 别显示裂图，给个占位
+  function thumbBox(path, w) {
+    return '<span class="thumbbox"><img class="thumb" loading="lazy" alt="" data-thumb="1" src="/api/thumb?w=' + w
+      + '&path=' + encodeURIComponent(path) + '"></span>';
+  }
+
   function setBigImage(prefix, path, infoText) {
     const img = $('#' + prefix + '-big');
     if (!img) return;
@@ -487,6 +493,10 @@
     wrap.classList.remove('actual');
     if (fit) fit.textContent = '适应窗口';
     const url = '/api/file?path=' + encodeURIComponent(path);
+    img.onerror = () => {
+      img.onerror = null;
+      if (inf) inf.textContent = '图片打不开了：它的上传缓存已被清理，重新导入这一批即可';
+    };
     img.src = url;
     img.dataset.path = path;
     if (inf) inf.textContent = infoText || '';
@@ -714,7 +724,7 @@
       return;
     }
     tb.innerHTML = clsState.items.map((it, i) => {
-      const thumb = '<img class="thumb" loading="lazy" alt="" src="/api/thumb?w=48&path=' + encodeURIComponent(it.path) + '">';
+      const thumb = thumbBox(it.path, 48);
       return '<tr data-i="' + i + '">'
         + '<td>' + thumb + '</td>'
         + '<td class="fname" title="' + esc(it.dir || '') + '">' + esc(it.rel || it.name) + '</td>'
@@ -1024,6 +1034,14 @@
     $('#meta-detail-card').addEventListener('dblclick', e => { if (e.detail === 2 && e.target.closest('img')) $('#meta-big-fit').click(); });
     // 顶栏 tab
     $$('#tabs .tab').forEach(b => { b.onclick = () => switchView(b.dataset.view); });
+    // 缩略图加载失败（上传缓存被清理 / 文件被移走）→ 换成「已清理」占位，不显示裂图
+    document.addEventListener('error', e => {
+      const t = e.target;
+      if (t && t.tagName === 'IMG' && t.dataset && t.dataset.thumb) {
+        t.style.display = 'none';
+        if (t.parentNode) t.parentNode.classList.add('missing');
+      }
+    }, true);
     renderMetaTable();
     refreshCache();
     try {                                   // 上次读过的目录填回去，「读取该目录」随时有东西可执行
