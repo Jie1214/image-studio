@@ -347,12 +347,12 @@
     const thumb = '<img class="thumb" loading="lazy" src="/api/thumb?w=96&amp;path=' + encodeURIComponent(f.path) + '" alt="">';
     const size = (f.w && f.h) ? ((f.w || 0) + '×' + (f.h || 0)) : '—';
     if (f.busy) {
-      return '<tr data-i="' + i + '"><td>' + thumb + '</td><td>' + esc(f.name) + '</td>'
-        + '<td class="mono">' + size + '</td><td class="hint">解析中…</td></tr>';
+      return '<tr data-i="' + i + '"><td>' + thumb + '</td><td class="fname">' + esc(f.name) + '</td>'
+        + '<td class="mono">' + size + '</td><td class="hint">解析中…</td><td class="fill"></td></tr>';
     }
     if (!m) {
-      return '<tr data-i="' + i + '"><td>' + thumb + '</td><td>' + esc(f.name) + '</td>'
-        + '<td class="mono">' + size + '</td><td class="bad">未解析</td></tr>';
+      return '<tr data-i="' + i + '"><td>' + thumb + '</td><td class="fname">' + esc(f.name) + '</td>'
+        + '<td class="mono">' + size + '</td><td class="bad">未解析</td><td class="fill"></td></tr>';
     }
     // 只要解析过就给「详情」按钮；没读到参数时右边只出图 + 占位文案
     const act = '<button class="btn sm" data-act="meta-detail">详情</button>';
@@ -361,13 +361,14 @@
       + '<td class="fname" title="' + esc(f.path) + '">' + esc(f.name) + '</td>'
       + '<td class="mono">' + size + '</td>'
       + '<td>' + act + '</td>'
+      + '<td class="fill"></td>'
       + '</tr>';
   }
 
   function renderMetaTable() {
     const tb = $('#meta-tbody');
     if (!metaState.files.length) {
-      tb.innerHTML = '<tr><td colspan="4" class="empty">列表为空：拖入图片 / 选文件夹 / 填目录后点「读取该目录」</td></tr>';
+      tb.innerHTML = '<tr><td colspan="5" class="empty">列表为空：拖入图片 / 选文件夹 / 填目录后点「读取该目录」</td></tr>';
     } else {
       tb.innerHTML = metaState.files.map((f, i) => metaRowItem(f, i)).join('');
     }
@@ -728,6 +729,31 @@
     a.href = a._url;
     a.download = '分类清单_' + clsStamp() + '.csv';
   }
+  // 目录填错时的自助提示：把这一层真实存在的文件夹列出来，点一下就填进输入框
+  async function suggestDirs(inpSel, chipsSel, dir) {
+    const box = $(chipsSel);
+    if (!box) return;
+    box.hidden = false;
+    box.innerHTML = '<span class="hint">正在查这一层有哪些文件夹…</span>';
+    try {
+      const r = await api('/api/list_dirs', { method: 'POST', body: { dir: dir || '' } });
+      if (!r.ok) { box.innerHTML = '<span class="hint">' + esc(r.error || '读不到这个目录') + '</span>'; return; }
+      const head = r.exists
+        ? '<b class="good">✓ 这个目录存在</b>：' + esc(r.listing)
+        : '<b class="warn">✗ 这个目录不存在</b>；下面是 ' + esc(r.listing) + ' 里真实存在的文件夹，点一下填进去：';
+      const chips = (r.dirs || []).map(d =>
+        '<button class="chip" data-dir="' + esc(d.path) + '">📁 ' + esc(d.name) + '</button>').join('')
+        || '<span class="hint">（这一层没有子文件夹）</span>';
+      box.innerHTML = '<div class="hint" style="margin-bottom:6px">' + head + (r.truncated ? '（只列了前 300 个）' : '')
+        + (r.files ? ' · 这一层还有 ' + r.files + ' 个文件' : '') + '</div><div class="chips">' + chips + '</div>';
+      box.querySelectorAll('.chip').forEach(b => {
+        b.onclick = () => { const inp = $(inpSel); if (inp) { inp.value = b.dataset.dir; inp.focus(); } };
+      });
+    } catch (e) {
+      box.innerHTML = '<span class="hint">' + esc(e.message || '读不到这个目录') + '</span>';
+    }
+  }
+
   async function ensureDirAllowed(dir) {
     try {
       const j = await api('/api/allow_dir', { method: 'POST', body: { dir: dir } });
@@ -759,8 +785,9 @@
       if (clsState.items.length) makeClsCsv();
       toast('扫描完成：' + clsState.items.length + ' 张');
     } catch (e) {
-      $('#cls-summary').textContent = '扫描失败';
+      $('#cls-summary').textContent = '扫描失败：' + (e.message || '');
       toast('扫描失败：' + e.message, 5000);
+      suggestDirs('#cls-dir', '#cls-dir-help', $('#cls-dir').value.trim());   // 顺手把这一层真实目录列出来
     } finally { $('#btn-cls-scan').disabled = false; }
   }
   async function clsRun() {
@@ -879,6 +906,7 @@
         if (j && j.ok === false) {          // 目录不存在 / 被拒绝：别报成「没有图片」，并把失效的记忆清掉
           toast('读取失败：' + (j.error || '未知错误'), 4600);
           $('#meta-summary').textContent = '读取失败：' + (j.error || '');
+          suggestDirs('#meta-scan-dir', '#meta-dir-help', dir);
           if (String(j.error || '').indexOf('不存在') >= 0) {
             try { localStorage.removeItem('is_meta_dir'); } catch (e) {}
             metaState.lastDir = '';

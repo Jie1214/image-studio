@@ -204,6 +204,7 @@
       <label class="chk"><input type="checkbox" id="meta-scan-rec" checked> 含子文件夹</label>
       <button class="btn" id="btn-meta-scan">读取该目录</button>
     </div>
+    <div class="dirhelp" id="meta-dir-help" hidden></div>
     <div class="progress" id="meta-progress" hidden><div class="bar" id="meta-bar"></div></div>
     <div class="summary" id="meta-summary">还没有图片</div>
   </section>
@@ -218,14 +219,16 @@
     </div>
     <div class="table-wrap">
       <table class="tbl slim">
+        <colgroup>
+          <col style="width:64px"><col style="width:300px"><col style="width:120px"><col style="width:88px"><col>
+        </colgroup>
         <thead>
           <tr>
-            <th style="width:64px">预览</th><th>文件名</th>
-            <th style="width:130px">尺寸</th><th style="width:84px">操作</th>
+            <th>预览</th><th>文件名</th><th>尺寸</th><th>操作</th><th class="fill"></th>
           </tr>
         </thead>
         <tbody id="meta-tbody">
-          <tr><td colspan="4" class="empty">列表为空：拖入图片 / 选文件夹 / 填目录后点「读取该目录」</td></tr>
+          <tr><td colspan="5" class="empty">列表为空：拖入图片 / 选文件夹 / 填目录后点「读取该目录」</td></tr>
         </tbody>
       </table>
     </div>
@@ -272,6 +275,7 @@
       <label class="chk"><input type="checkbox" id="cls-rec" checked> 含子文件夹</label>
       <button class="btn primary" id="btn-cls-scan">🔍 扫描并预览</button>
     </div>
+    <div class="dirhelp" id="cls-dir-help" hidden></div>
     <div class="grid">
       <label class="lab-col">分类规则
         <select class="input" id="cls-rule">

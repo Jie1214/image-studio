@@ -222,6 +222,37 @@ class Handler(BaseHTTPRequestHandler):
                     save_config({"input_roots": roots})
                     return self._json({"ok": True, "added": True, "roots": roots})
                 return self._json({"ok": True, "added": False, "roots": roots})
+            if path == "/api/list_dirs":
+                # 目录填错了怎么办：把「这一层/上一层真实存在的文件夹」列出来让用户点，不用手打路径
+                b = self._json_body()
+                d = (b.get("dir") or "").strip()
+                if not d:
+                    return self._json({"ok": False, "error": "请填写目录"}, 400)
+                p = Path(d)
+                parent = p
+                if not parent.is_dir():
+                    parent = p.parent
+                if not parent.is_dir():
+                    return self._json({"ok": False, "error": "上一级目录也不存在：%s" % parent}, 400)
+                dirs, files = [], 0
+                try:
+                    for child in sorted(parent.iterdir(), key=lambda x: x.name.lower()):
+                        try:
+                            if child.name.startswith((".", "$")):
+                                continue
+                            if child.is_dir():
+                                dirs.append({"name": child.name, "path": str(child)})
+                            else:
+                                files += 1
+                        except OSError:
+                            continue
+                        if len(dirs) >= 300:
+                            break
+                except OSError as exc:
+                    return self._json({"ok": False, "error": "读不到这个目录：%s" % exc}, 400)
+                return self._json({"ok": True, "queried": d, "exists": Path(d).is_dir(),
+                                   "listing": str(parent), "dirs": dirs, "files": files,
+                                   "truncated": len(dirs) >= 300})
             if path == "/api/classify/scan":
                 b = self._json_body()
                 root = (b.get("dir") or "").strip()
@@ -252,6 +283,8 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
             return self._json({"ok": False, "error": "未知接口 %s" % path}, 404)
+        except ValueError as exc:      # 请求体不是合法 JSON / 参数不合法 → 400，别报成 500 让人看不懂
+            return self._json({"ok": False, "error": str(exc)}, 400)
         except Exception as exc:      # noqa: BLE001
             return self._json({"ok": False, "error": "%s: %s" % (type(exc).__name__, exc)}, 500)
 
