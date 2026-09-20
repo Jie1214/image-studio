@@ -30,7 +30,13 @@
       o.headers['Content-Type'] = 'application/json';
       o.body = JSON.stringify(o.body);
     }
-    const r = await fetch(path, o);
+    let r;
+    try {
+      r = await fetch(path, o);
+    } catch (e) {
+      // 服务没起来 / 正在重启时，fetch 直接抛 TypeError：要说清是「连不上服务」，别让人以为是目录有问题
+      throw new Error('连不上本地服务（服务可能正在重启或已关闭）—— 等两秒再点一次');
+    }
     const ct = r.headers.get('Content-Type') || '';
     if (!ct.includes('application/json')) return r;
     const j = await r.json();
