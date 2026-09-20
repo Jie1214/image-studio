@@ -203,6 +203,30 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"ok": True, "opened": str(p)})
                 except Exception as exc:       # noqa: BLE001
                     return self._json({"ok": False, "error": str(exc)}, 500)
+            if path == "/api/classify/scan":
+                b = self._json_body()
+                root = (b.get("dir") or "").strip()
+                if not root:
+                    return self._json({"ok": False, "error": "请填写要分类的目录"}, 400)
+                from .classify import scan_classify, RULE_COMFY
+                # 跳过输出目录，避免把产物又搬进产物
+                res = scan_classify(root, bool(b.get("recursive", True)),
+                                    b.get("rule") or RULE_COMFY,
+                                    deep=bool(b.get("deep", False)),
+                                    skip_dirs=[b.get("out_dir") or str(output_dir())])
+                return self._json(res)
+            if path == "/api/classify/run":
+                b = self._json_body()
+                items = b.get("items") or []
+                if not items:
+                    return self._json({"ok": False, "error": "没有待分类的条目"}, 400)
+                from .classify import run_classify
+                res = run_classify(items, b.get("root") or "", b.get("out_dir") or str(output_dir()),
+                                   names=b.get("names"), mode=b.get("mode") or "copy",
+                                   conflict=b.get("conflict") or "rename",
+                                   preserve_tree=b.get("preserve_tree", True),
+                                   confirm=bool(b.get("confirm")))
+                return self._json(res, 200 if res.get("ok") else 400)
             # 未知路由：先把请求体读干净再回 404，否则残留字节会污染同一条 keep-alive 连接上的后续请求
             try:
                 self._body()

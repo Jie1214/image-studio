@@ -114,7 +114,26 @@ textarea.input{resize:vertical;font:13px/1.6 ui-monospace,Consolas,monospace}
 .tab.active{color:var(--gold2);border-bottom-color:var(--gold);background:var(--card);font-weight:600}
 .view[hidden]{display:none}
 
-/* 读图参数面板 */
+/* 详情：左大图 + 右参数 */
+.meta-wrap{display:grid;grid-template-columns:minmax(300px,40%) minmax(0,1fr);gap:16px;align-items:start}
+@media (max-width:900px){.meta-wrap{grid-template-columns:minmax(0,1fr)}}
+.meta-left{position:sticky;top:64px}
+.bigwrap{background:#0d0d12;border:1px solid var(--line);border-radius:10px;padding:8px;
+  display:flex;align-items:center;justify-content:center;min-height:220px;max-height:72vh;overflow:auto}
+.bigwrap img{max-width:100%;max-height:calc(72vh - 20px);object-fit:contain;border-radius:6px;display:block}
+.bigwrap.actual img{max-height:none;max-width:none;object-fit:unset;cursor:zoom-out}
+.bigbar{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+.meta-right .meta-grid{grid-template-columns:minmax(0,1fr)}   /* 详情在右栏时改单列 */
+.meta-right .kv{font-size:12.5px}
+/* 分类结果徽标 */
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;border:1px solid var(--line);white-space:nowrap}
+.badge.a{background:rgba(212,175,55,.16);border-color:rgba(212,175,55,.5);color:#f0d98a}
+.badge.b{background:rgba(120,160,255,.12);border-color:rgba(120,160,255,.4);color:#b8ccff}
+.badge.c{background:rgba(150,150,160,.12);border-color:rgba(150,150,160,.35);color:#c3c3cf}
+.mono{font-family:ui-monospace,Consolas,monospace}
+.btn.sm{padding:3px 9px;font-size:12px}
+table.tbl td.empty{text-align:center;color:var(--muted,#888);padding:18px}
+
 .drop.sm{padding:12px;font-size:13.5px}
 .meta-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
 @media (max-width:900px){ .meta-grid{grid-template-columns:minmax(0,1fr)} }

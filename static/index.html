@@ -18,6 +18,7 @@
 <nav class="tabs" id="tabs">
   <button class="tab active" data-view="compress">🖼️ 批量压缩</button>
   <button class="tab" data-view="meta">🔍 读图参数</button>
+  <button class="tab" data-view="classify">🗂️ 一键分类</button>
 </nav>
 
 <main>
@@ -236,9 +237,120 @@
       <a class="btn" id="meta-dl" hidden download>⬇ 保存这一张的报告</a>
       <button class="btn ghost" id="meta-detail-close">收起</button>
     </div>
-    <div id="meta-panel"></div>
+    <div class="meta-wrap">
+      <div class="meta-left">
+        <div class="bigwrap"><img id="meta-big" alt=""></div>
+        <div class="bigbar">
+          <span class="hint mono" id="meta-big-info"></span>
+          <span class="spacer"></span>
+          <button class="btn sm" id="meta-big-fit">适应窗口</button>
+          <a class="btn sm" id="meta-big-open" target="_blank">新窗口打开原图</a>
+        </div>
+      </div>
+      <div class="meta-right" id="meta-panel"></div>
+    </div>
   </section>
 </div><!-- /view-meta -->
+
+<!-- ===================== 一键分类（独立 tab） ===================== -->
+<div id="view-classify" class="view" hidden>
+  <section class="card">
+    <div class="card-head">
+      <span class="ttl">分类设置</span>
+      <span class="hint">按「有没有 ComfyUI 生成信息」把图分到不同文件夹；先预览，再执行</span>
+    </div>
+    <div class="row">
+      <input class="input grow" id="cls-dir" placeholder="要分类的目录，例如 D:\待整理">
+      <label class="chk"><input type="checkbox" id="cls-rec" checked> 含子文件夹</label>
+      <button class="btn primary" id="btn-cls-scan">🔍 扫描并预览</button>
+    </div>
+    <div class="grid">
+      <label class="lab-col">分类规则
+        <select class="input" id="cls-rule">
+          <option value="comfy">按 ComfyUI 信息（A=含 ComfyUI，B=其余）</option>
+          <option value="any">按有无生成信息（跑过的 / 纯图）</option>
+          <option value="three">三分类（ComfyUI / 其他工具 / 无信息）</option>
+        </select>
+      </label>
+      <label class="lab-col">文件夹 A（ComfyUI）
+        <input class="input" id="cls-name-a" value="有ComfyUI信息">
+      </label>
+      <label class="lab-col">文件夹 B（其它）
+        <input class="input" id="cls-name-b" value="其他">
+      </label>
+      <label class="lab-col" id="cls-wrap-c" hidden>文件夹 C（无信息）
+        <input class="input" id="cls-name-c" value="无生成信息">
+      </label>
+      <label class="lab-col">方式
+        <select class="input" id="cls-mode">
+          <option value="copy">复制（安全，原文件保留）</option>
+          <option value="move">移动（原位置删除）</option>
+        </select>
+      </label>
+      <label class="lab-col">同名文件
+        <select class="input" id="cls-conflict">
+          <option value="rename">自动改名</option>
+          <option value="skip">跳过</option>
+          <option value="overwrite">覆盖</option>
+        </select>
+      </label>
+      <label class="lab-col">输出根目录（留空 = output\分类_时间戳）
+        <input class="input" id="cls-out" placeholder="留空即可">
+      </label>
+    </div>
+    <div class="row wrap">
+      <label class="chk"><input type="checkbox" id="cls-tree" checked> 保留来源子目录结构</label>
+      <span class="spacer"></span>
+      <span class="hint" id="cls-summary">还没扫描</span>
+    </div>
+    <div class="progress" id="cls-progress" hidden><div class="bar" id="cls-bar"></div></div>
+    <div class="row">
+      <button class="btn primary" id="btn-cls-run" disabled>🚀 开始分类</button>
+      <button class="btn ghost" id="btn-cls-open">📂 打开输出目录</button>
+      <a class="btn" id="cls-export" hidden download>⬇ 导出分类清单（CSV）</a>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <span class="ttl">分类预览</span>
+      <span class="hint">点任意一行：左边看大图，右边看判定依据</span>
+    </div>
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th style="width:64px">预览</th><th>文件名</th><th style="width:96px">归入</th>
+            <th style="width:170px">判定</th><th style="width:96px">体积</th><th style="width:110px">尺寸</th>
+          </tr>
+        </thead>
+        <tbody id="cls-tbody">
+          <tr><td colspan="6" class="empty">先填目录后点「扫描并预览」</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card" id="cls-detail-card" hidden>
+    <div class="card-head">
+      <span class="ttl" id="cls-detail-title">条目详情</span>
+      <span class="spacer"></span>
+      <button class="btn ghost" id="cls-detail-close">收起</button>
+    </div>
+    <div class="meta-wrap">
+      <div class="meta-left">
+        <div class="bigwrap"><img id="cls-big" alt=""></div>
+        <div class="bigbar">
+          <span class="hint mono" id="cls-big-info"></span>
+          <span class="spacer"></span>
+          <button class="btn sm" id="cls-big-fit">适应窗口</button>
+          <a class="btn sm" id="cls-big-open" target="_blank">新窗口打开</a>
+        </div>
+      </div>
+      <div class="meta-right" id="cls-detail"></div>
+    </div>
+  </section>
+</div><!-- /view-classify -->
 </main>
 
 <!-- 对比弹窗 -->

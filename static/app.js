@@ -459,11 +459,38 @@
     return added.length;
   }
 
+  function bigInfo(it) {
+    return [it.name, (it.w ? it.w + '×' + it.h : ''), fmtBytes(it.bytes || 0), it.format || '', it.dir || '']
+      .filter(Boolean).join(' · ');
+  }
+
+  /* 详情左侧的大图：点图或按钮在「适应窗口 / 原始大小」之间切换 */
+  function setBigImage(prefix, path, infoText) {
+    const img = $('#' + prefix + '-big');
+    if (!img) return;
+    const wrap = img.parentElement, inf = $('#' + prefix + '-big-info');
+    const op = $('#' + prefix + '-big-open'), fit = $('#' + prefix + '-big-fit');
+    wrap.classList.remove('actual');
+    if (fit) fit.textContent = '适应窗口';
+    const url = '/api/file?path=' + encodeURIComponent(path);
+    img.src = url;
+    img.dataset.path = path;
+    if (inf) inf.textContent = infoText || '';
+    if (op) op.href = url + '&dl=1';
+    const toggle = () => {
+      wrap.classList.toggle('actual');
+      if (fit) fit.textContent = wrap.classList.contains('actual') ? '缩小适应' : '适应窗口';
+    };
+    img.onclick = toggle;
+    if (fit) fit.onclick = toggle;
+  }
+
   function showMetaDetail(it) {
     if (!it || !it.meta) return;
     metaState.last = it;
     $('#meta-detail-title').textContent = '参数详情 · ' + it.name;
     $('#meta-detail-card').hidden = false;
+    setBigImage('meta', it.path, bigInfo(it));
     renderMeta(it.meta);
   }
 
@@ -504,7 +531,8 @@
     return L.join('\n');
   }
 
-  function renderMeta(m) {
+  function renderMeta(m, targetSel, dlSel) {
+    const tsel = targetSel || '#meta-panel', dsel = dlSel || '#meta-dl';
     state.meta = m;
     const f = m.file;
     const ok = m.ok;
@@ -518,8 +546,8 @@
     const census = Object.entries(m.node_census || {}).slice(0, 14)
       .map(([k, v]) => '<span class="tag">' + esc(k) + ' ×' + v + '</span>').join(' ');
 
-    $('#meta-panel').hidden = false;
-    $('#meta-panel').innerHTML = ''
+    $(tsel).hidden = false;
+    $(tsel).innerHTML = ''
       + '<div class="meta-grid">'
       + '  <div>'
       + '    <div class="meta-file"><b>' + esc(f.name) + '</b> · ' + f.w + '×' + f.h + ' · ' + fmtBytes(f.bytes)
@@ -533,8 +561,8 @@
       + (m.total_nodes ? '    <div class="meta-sec"><h4>节点构成（共 ' + m.total_nodes + ' 个）</h4><div class="meta-kv">' + census + '</div></div>' : '')
       + '  </div>'
       + '  <div>'
-      + '    <div class="meta-sec"><h4>正向提示词 <button class="btn sm" id="meta-copy-pos">复制</button></h4><pre class="out">' + esc(m.positive || '（这张图没有正向提示词）') + '</pre></div>'
-      + '    <div class="meta-sec"><h4>负向提示词 <button class="btn sm" id="meta-copy-neg">复制</button></h4><pre class="out">' + esc(m.negative || '（没有负向提示词）') + '</pre></div>'
+      + '    <div class="meta-sec"><h4>正向提示词 <button class="btn sm js-copy-pos">复制</button></h4><pre class="out">' + esc(m.positive || '（这张图没有正向提示词）') + '</pre></div>'
+      + '    <div class="meta-sec"><h4>负向提示词 <button class="btn sm js-copy-neg">复制</button></h4><pre class="out">' + esc(m.negative || '（没有负向提示词）') + '</pre></div>'
       + '    ' + ((m.notes || []).length ? '<div class="meta-sec"><h4>提示</h4><ul class="notes">' + m.notes.map(n => '<li>' + esc(n) + '</li>').join('') + '</ul></div>' : '')
       + '    <details class="meta-raw"><summary>原始元数据（点开可复制给其它工具）</summary>'
       + '      <div class="hint">容器里带的键：' + esc((m.meta_keys || []).join('、') || '无') + '</div>'
@@ -542,9 +570,13 @@
       + '    </details>'
       + '  </div>'
       + '</div>';
-    if (m.positive) $('#meta-copy-pos').onclick = () => copyText(m.positive, '正向提示词');
-    if (m.negative) $('#meta-copy-neg').onclick = () => copyText(m.negative, '负向提示词');
-    const dl = $('#meta-dl');
+    const panel = $(tsel);
+    const cp = panel.querySelector('.js-copy-pos');
+    if (cp && m.positive) cp.onclick = () => copyText(m.positive, '正向提示词');
+    const cn = panel.querySelector('.js-copy-neg');
+    if (cn && m.negative) cn.onclick = () => copyText(m.negative, '负向提示词');
+    const dl = dsel ? $(dsel) : null;
+    if (!dl) return;
     try {
       const blob = new Blob([metaReport(m)], { type: 'text/markdown;charset=utf-8' });
       if (dl._url) URL.revokeObjectURL(dl._url);
@@ -628,13 +660,150 @@
   }
 
   /* ---------------- 顶栏 tab 切换 ---------------- */
+  const VIEWS = ['compress', 'meta', 'classify'];
   function switchView(v) {
-    const target = (v === 'meta') ? 'meta' : 'compress';
-    $('#view-compress').hidden = (target !== 'compress');
-    $('#view-meta').hidden = (target !== 'meta');
+    const target = VIEWS.includes(v) ? v : 'compress';
+    VIEWS.forEach(k => { const el = $('#view-' + k); if (el) el.hidden = (k !== target); });
     $$('#tabs .tab').forEach(b => b.classList.toggle('active', b.dataset.view === target));
-    state.view = target;
     try { localStorage.setItem('imgstudio.view', target); } catch (e) { }
+    state.view = target;
+  }
+
+  /* ---------------- 一键分类（第三个 tab） ---------------- */
+  const clsState = { items: [], root: '', out: '', running: false };
+
+  function clsNames() {
+    return {
+      A: ($('#cls-name-a').value.trim() || '有ComfyUI信息'),
+      B: ($('#cls-name-b').value.trim() || '其他'),
+      C: ($('#cls-name-c').value.trim() || '无生成信息'),
+    };
+  }
+  function clsBadge(b) {
+    const n = clsNames()[b] || b;
+    return '<span class="badge ' + String(b).toLowerCase() + '">' + esc(n) + '</span>';
+  }
+  function clsStamp() {
+    const d = new Date(), p = n => String(n).padStart(2, '0');
+    return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+  }
+  function renderClsTable() {
+    const tb = $('#cls-tbody');
+    if (!clsState.items.length) {
+      tb.innerHTML = '<tr><td colspan="6" class="empty">先填目录后点「扫描并预览」</td></tr>';
+      return;
+    }
+    tb.innerHTML = clsState.items.map((it, i) => {
+      const thumb = '<img class="thumb" loading="lazy" alt="" src="/api/thumb?w=48&path=' + encodeURIComponent(it.path) + '">';
+      return '<tr data-i="' + i + '">'
+        + '<td>' + thumb + '</td>'
+        + '<td class="fname" title="' + esc(it.dir || '') + '">' + esc(it.rel || it.name) + '</td>'
+        + '<td>' + clsBadge(it.bucket) + '</td>'
+        + '<td>' + esc(it.tool || '—') + (it.source ? ' <span class="hint">' + esc(it.source) + '</span>' : '') + '</td>'
+        + '<td>' + fmtBytes(it.bytes || 0) + '</td>'
+        + '<td>' + (it.w ? it.w + '×' + it.h : '—') + '</td>'
+        + '</tr>';
+    }).join('');
+  }
+  function clsSummary() {
+    const c = {}, b = {};
+    clsState.items.forEach(it => { c[it.bucket] = (c[it.bucket] || 0) + 1; b[it.bucket] = (b[it.bucket] || 0) + (it.bytes || 0); });
+    const names = clsNames();
+    $('#cls-summary').innerHTML = clsState.items.length
+      ? ('共 <b>' + clsState.items.length + '</b> 张：' + ['A', 'B', 'C'].filter(k => c[k])
+        .map(k => '<b>' + esc(names[k]) + '</b> ' + c[k] + ' 张（' + fmtBytes(b[k]) + '）').join(' · '))
+      : '没有可分类的图片';
+  }
+  function makeClsCsv() {
+    const names = clsNames();
+    const head = '文件名,相对路径,判定,归入文件夹,工具,来源,宽,高,体积字节';
+    const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+    const rows = clsState.items.map(it => [it.name, it.rel, it.tool || '', names[it.bucket] || it.bucket,
+      it.source || '', it.w, it.h, it.bytes].map(q).join(','));
+    const blob = new Blob(['\ufeff' + head + '\n' + rows.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const a = $('#cls-export');
+    if (a._url) URL.revokeObjectURL(a._url);
+    a._url = URL.createObjectURL(blob);
+    a.href = a._url;
+    a.download = '分类清单_' + clsStamp() + '.csv';
+  }
+  async function clsScan() {
+    const dir = $('#cls-dir').value.trim();
+    if (!dir) return toast('先填要分类的目录');
+    try { localStorage.setItem('imgstudio.clsdir', dir); } catch (e) { }
+    $('#btn-cls-scan').disabled = true;
+    $('#cls-summary').textContent = '正在扫描并逐张判定…（图多时稍等）';
+    try {
+      const j = await api('/api/classify/scan', {
+        method: 'POST', body: {
+          dir: dir, recursive: $('#cls-rec').checked, rule: $('#cls-rule').value,
+          out_dir: $('#cls-out').value.trim() || undefined,
+        }
+      });
+      if (!j.ok) throw new Error(j.error || '扫描失败');
+      clsState.items = j.items || [];
+      clsState.root = j.root;
+      renderClsTable(); clsSummary();
+      $('#btn-cls-run').disabled = !clsState.items.length;
+      $('#cls-export').hidden = !clsState.items.length;
+      if (clsState.items.length) makeClsCsv();
+      toast('扫描完成：' + clsState.items.length + ' 张');
+    } catch (e) {
+      $('#cls-summary').textContent = '扫描失败';
+      toast('扫描失败：' + e.message, 5000);
+    } finally { $('#btn-cls-scan').disabled = false; }
+  }
+  async function clsRun() {
+    if (clsState.running || !clsState.items.length) return;
+    const mode = $('#cls-mode').value, names = clsNames();
+    const outDir = $('#cls-out').value.trim() || ('output/分类_' + clsStamp());
+    if (mode === 'move') {
+      const ok = window.confirm('移动模式：' + clsState.items.length + ' 张图会从原位置被移走（不是删除，但不会留在原处）。\n\n'
+        + '建议先用「复制」确认分类正确。确定要移动吗？');
+      if (!ok) return;
+    }
+    clsState.running = true;
+    $('#btn-cls-run').disabled = true;
+    $('#cls-progress').hidden = false;
+    $('#cls-bar').style.width = '15%';
+    try {
+      const j = await api('/api/classify/run', {
+        method: 'POST', body: {
+          items: clsState.items.map(it => ({ path: it.path, bucket: it.bucket })),
+          root: clsState.root, out_dir: outDir, names: names, mode: mode,
+          conflict: $('#cls-conflict').value, preserve_tree: $('#cls-tree').checked, confirm: true,
+        }
+      });
+      if (!j.ok) throw new Error(j.error || '分类失败');
+      clsState.out = j.out_dir;
+      $('#cls-bar').style.width = '100%';
+      const s = j.stat || {};
+      toast('分类完成：' + (s.copied ? '复制 ' + s.copied + ' 张' : '移动 ' + s.moved + ' 张')
+        + (s.skipped ? '，跳过 ' + s.skipped : '') + (s.failed ? '，失败 ' + s.failed : ''), 6000);
+      $('#cls-summary').innerHTML = '✅ 已输出到 <span class="mono">' + esc(j.out_dir) + '</span>：'
+        + ['A', 'B', 'C'].filter(k => clsState.items.some(i => i.bucket === k))
+          .map(k => '<b>' + esc(names[k]) + '</b> ' + clsState.items.filter(i => i.bucket === k).length + ' 张').join(' · ');
+    } catch (e) {
+      toast('分类失败：' + e.message, 6000);
+    } finally {
+      clsState.running = false;
+      $('#btn-cls-run').disabled = false;
+      setTimeout(() => { $('#cls-progress').hidden = true; $('#cls-bar').style.width = '0'; }, 1200);
+    }
+  }
+  async function clsDetail(i) {
+    const it = clsState.items[i];
+    if (!it) return;
+    $('#cls-detail-card').hidden = false;
+    $('#cls-detail-title').textContent = '条目详情 · ' + it.name;
+    setBigImage('cls', it.path, bigInfo(it));
+    $('#cls-detail').innerHTML = '<div class="hint" style="padding:8px">正在读完整参数…</div>';
+    try {
+      const m = await api('/api/meta', { method: 'POST', body: { path: it.path } });
+      renderMeta(m.meta || m, '#cls-detail', null);
+    } catch (e) {
+      $('#cls-detail').innerHTML = '<div class="hint">读取失败：' + esc(e.message) + '</div>';
+    }
   }
 
   /* ---------------- 事件绑定 ---------------- */
@@ -691,6 +860,26 @@
     $('#meta-clear').onclick = () => { metaState.files = []; renderMetaTable(); $('#meta-detail-card').hidden = true; toast('已清空'); };
     $('#meta-copy-pos-all').onclick = copyAllPositive;
     $('#meta-detail-close').onclick = () => { $('#meta-detail-card').hidden = true; };
+    /* ---- 一键分类 tab ---- */
+    $('#cls-rule').onchange = () => { $('#cls-wrap-c').hidden = ($('#cls-rule').value !== 'three'); };
+    ['#cls-name-a', '#cls-name-b', '#cls-name-c'].forEach(s => {
+      $(s).oninput = () => { if (clsState.items.length) { renderClsTable(); clsSummary(); makeClsCsv(); } };
+    });
+    $('#btn-cls-scan').onclick = clsScan;
+    $('#cls-dir').addEventListener('keydown', e => { if (e.key === 'Enter') clsScan(); });
+    $('#btn-cls-run').onclick = clsRun;
+    $('#btn-cls-open').onclick = async () => {
+      const dir = clsState.out || $('#cls-out').value.trim() || '';
+      if (!dir) return toast('还没有输出目录');
+      try { await api('/api/reveal', { method: 'POST', body: { path: dir } }); toast('已打开输出目录'); }
+      catch (e) { toast('打开失败：' + e.message); }
+    };
+    $('#cls-tbody').onclick = e => {
+      const tr = e.target.closest('tr');
+      if (!tr || tr.dataset.i === undefined) return;
+      clsDetail(+tr.dataset.i);
+    };
+    $('#cls-detail-close').onclick = () => { $('#cls-detail-card').hidden = true; };
     $('#meta-tbody').onclick = e => {
       const tr = e.target.closest('tr'); if (!tr) return;
       const it = metaState.files[+tr.dataset.i]; if (!it) return;
@@ -779,6 +968,7 @@
     bind();
     renderRoots();
     try { switchView(localStorage.getItem('imgstudio.view') || 'compress'); } catch (e) { switchView('compress'); }
+    try { $('#cls-dir').value = localStorage.getItem('imgstudio.clsdir') || ''; } catch (e) { }
     try {
       const j = await api('/api/config');
       state.cfg = j.config;

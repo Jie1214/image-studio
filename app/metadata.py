@@ -110,8 +110,8 @@ def _loads_tolerant(s: str) -> Any:
     raise ValueError("找不到可解析的 JSON")
 
 
-def raw_metadata(path: str | Path) -> Dict[str, Any]:
-    """取出容器里的原始元数据：PNG tEXt、EXIF、XMP，外加字节兜底。"""
+def raw_metadata(path: str | Path, deep: bool = True) -> Dict[str, Any]:
+    """取出容器里的原始元数据：PNG tEXt、EXIF、XMP，外加字节兜底（deep=False 时不扫字节，快）。"""
     path = Path(path)
     out: Dict[str, Any] = {"keys": [], "text": {}, "exif": {}, "xmp": ""}
     try:
@@ -160,42 +160,44 @@ def raw_metadata(path: str | Path) -> Dict[str, Any]:
         out["error"] = "%s: %s" % (type(exc).__name__, exc)
 
     # 字节兜底：有些容器（或二次处理过的图）Pillow 读不到 tEXt，但 JSON 还在文件里
-    try:
-        blob = path.read_bytes()
-        idx = blob.find(b'"class_type"')
-        if idx != -1:
-            best, best_n = "", 0
-            # 从最近的若干个 '{' 往前试，取「含 class_type 最多」的那个对象（避免只抓到一个子节点）
-            starts = []
-            pos = idx
-            for _ in range(12):
-                pos = blob.rfind(b"{", 0, pos if pos > 0 else 0)
-                if pos == -1:
-                    break
-                starts.append(pos)
-                pos = pos - 1 if pos > 0 else 0
-            for st in starts:
-                depth, end = 0, -1
-                limit = min(len(blob), st + 40_000_000)
-                for i in range(st, limit):
-                    c = blob[i]
-                    if c == 0x7B:
-                        depth += 1
-                    elif c == 0x7D:
-                        depth -= 1
-                        if depth == 0:
-                            end = i + 1
-                            break
-                if end <= st:
-                    continue
-                chunk = blob[st:end].decode("utf-8", "ignore")
-                n = chunk.count('"class_type"')
-                if n > best_n:
-                    best, best_n = chunk, n
-            if best and best_n > 0:
-                out["byte_json"] = best
-    except Exception:
-        pass
+    # deep=False（批量分类）时跳过这步：要读整文件，几千张会很慢；PNG/JPEG 的常规路径已够判定
+    if deep:
+        try:
+            blob = path.read_bytes()
+            idx = blob.find(b'"class_type"')
+            if idx != -1:
+                best, best_n = "", 0
+                # 从最近的若干个 '{' 往前试，取「含 class_type 最多」的那个对象（避免只抓到一个子节点）
+                starts = []
+                pos = idx
+                for _ in range(12):
+                    pos = blob.rfind(b"{", 0, pos if pos > 0 else 0)
+                    if pos == -1:
+                        break
+                    starts.append(pos)
+                    pos = pos - 1 if pos > 0 else 0
+                for st in starts:
+                    depth, end = 0, -1
+                    limit = min(len(blob), st + 40_000_000)
+                    for i in range(st, limit):
+                        c = blob[i]
+                        if c == 0x7B:
+                            depth += 1
+                        elif c == 0x7D:
+                            depth -= 1
+                            if depth == 0:
+                                end = i + 1
+                                break
+                    if end <= st:
+                        continue
+                    chunk = blob[st:end].decode("utf-8", "ignore")
+                    n = chunk.count('"class_type"')
+                    if n > best_n:
+                        best, best_n = chunk, n
+                if best and best_n > 0:
+                    out["byte_json"] = best
+        except Exception:
+            pass
 
     out["keys"] = list(out["text"].keys()) + (["xmp"] if out["xmp"] else [])
     return out
@@ -420,10 +422,10 @@ def parse_a1111(text: str) -> Dict[str, Any]:
             "node_census": {}, "total_nodes": 0, "fields": fields}
 
 
-def read_params(path: str | Path) -> Dict[str, Any]:
-    """主入口：返回结构化结果（含原始元数据摘要）。"""
+def read_params(path: str | Path, deep: bool = True) -> Dict[str, Any]:
+    """主入口：返回结构化结果（含原始元数据摘要）。deep=False 时不做整文件字节兜底（批量分类用，快）。"""
     path = Path(path)
-    raw = raw_metadata(path)
+    raw = raw_metadata(path, deep=deep)
     res: Dict[str, Any] = {
         "ok": False, "file": {
             "name": path.name, "path": str(path), "bytes": path.stat().st_size if path.exists() else 0,
