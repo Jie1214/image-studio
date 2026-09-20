@@ -181,20 +181,23 @@
   async function uploadFiles(fileList) {
     const files = Array.from(fileList || []).filter(f => /^image\//.test(f.type) || /\.(jpe?g|png|webp|avif|bmp|tiff?|gif|jfif)$/i.test(f.name));
     if (!files.length) return toast('没有可用的图片文件');
+    if (files.length > 300) toast('文件较多（' + files.length + ' 张）：若这些图能直接访问，用「扫描该目录」不走上传会快很多', 5200);
     const chunk = 20;
+    let added = 0;
     for (let i = 0; i < files.length; i += chunk) {
       const part = files.slice(i, i + chunk);
       const fd = new FormData();
-      part.forEach(f => fd.append('files', f, f.name));
+      // 文件夹上传时带上相对路径（子目录同名文件不会被覆盖）
+      part.forEach(f => fd.append('files', f, f.webkitRelativePath || f.name));
       $('#job-hint').textContent = '正在导入 ' + Math.min(i + chunk, files.length) + '/' + files.length + '…';
       try {
         const j = await api('/api/upload', { method: 'POST', body: fd });
-        addFiles(j.files || []);
+        added += addFiles(j.files || []);
       } catch (e) {
         toast('导入失败：' + e.message, 4200);
       }
     }
-    $('#job-hint').textContent = '导入完成';
+    $('#job-hint').textContent = '导入完成：新增 ' + added + ' 张';
   }
 
   async function entriesFromDataTransfer(dt) {
@@ -383,6 +386,14 @@
 
     $('#btn-pick').onclick = () => $('#file-input').click();
     $('#file-input').onchange = e => uploadFiles(e.target.files);
+    // 「选择文件夹」：webkitdirectory 能一次拿到整个文件夹（含子文件夹）里的所有文件
+    $('#btn-pickdir').onclick = () => $('#dir-input').click();
+    $('#dir-input').onchange = e => {
+      const n = (e.target.files || []).length;
+      if (!n) return toast('这个文件夹里没找到图片');
+      toast('已选中 ' + n + ' 个文件，开始导入…');
+      uploadFiles(e.target.files);
+    };
     $('#btn-scan').onclick = doScan;
     $('#btn-clear').onclick = () => { state.files = []; renderTable(); $('#progress').hidden = true; $('#bar').style.width = '0'; $('#job-hint').textContent = '已清空'; };
     $('#recent-roots').onclick = e => { const b = e.target.closest('button'); if (b) { $('#scan-dir').value = b.dataset.dir; doScan(); } };

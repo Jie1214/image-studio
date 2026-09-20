@@ -24,11 +24,14 @@
     </div>
     <div class="drop" id="drop">
       <div class="drop-ico">🖼️</div>
-      <div>把图片或文件夹拖到这里（可多选）</div>
+      <div>把图片或整个文件夹拖到这里（可多选）</div>
       <div class="row center">
         <button class="btn primary" id="btn-pick">选择文件</button>
+        <button class="btn" id="btn-pickdir">选择文件夹</button>
         <input type="file" id="file-input" multiple accept="image/*" hidden>
+        <input type="file" id="dir-input" webkitdirectory directory multiple hidden>
       </div>
+      <div class="hint" id="pick-hint">「选择文件夹」会把该文件夹里所有图片（含子文件夹）一次性读进来</div>
     </div>
     <div class="row scanrow">
       <input class="input grow" id="scan-dir" placeholder="或填写要扫描的目录，例如 D:\照片\2026 旅行">
