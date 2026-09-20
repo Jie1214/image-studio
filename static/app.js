@@ -479,6 +479,79 @@
   }
 
   /* 详情左侧的大图：点图或按钮在「适应窗口 / 原始大小」之间切换 */
+  /* ---------------- 图库索引（跨目录搜索） ---------------- */
+  const libState = { searching: false, savedFiles: [], savedSummary: '' };
+
+  async function libRefresh() {
+    const el = $('#lib-stats');
+    if (!el) return;
+    try {
+      const s = await api('/api/library/stats');
+      const tops = (s.tools || []).slice(0, 3).map(t => t.tool + ' ' + t.n).join(' / ');
+      el.textContent = s.total
+        ? ('图库：' + s.total + ' 张（带提示词 ' + s.with_prompt + ' · ComfyUI ' + s.comfy + '）' + (tops ? ' · ' + tops : '') + (s.updated ? ' · 更新 ' + s.updated : ''))
+        : '图库：空（解析后点「＋ 存入图库」）';
+    } catch (e) { el.textContent = '图库：读不到状态'; }
+  }
+
+  async function libAdd() {
+    const items = metaState.files.filter(f => f.meta).map(f => f.meta);
+    if (!items.length) return toast('先解析出一些图片再存');
+    toast('正在写入图库（' + items.length + ' 张）…', 2600);
+    try {
+      const r = await api('/api/library/add', { method: 'POST', body: { items: items } });
+      toast('图库已更新：新增 ' + r.added + ' · 覆盖 ' + r.updated + ' · 共 ' + r.total + ' 张', 4200);
+    } catch (e) { toast('写入失败：' + e.message, 4200); }
+    libRefresh();
+  }
+
+  function libRow(it) {                     // 图库条目 → 复用列表结构（详情面板直接能用）
+    return { path: it.path, name: it.name, bytes: it.bytes, w: it.w, h: it.h, format: it.format, dir: it.dir,
+             meta: { ok: it.ok, tool: it.tool, models: it.models, loras: it.loras, sampler: it.sampler,
+                     positive: it.positive, negative: it.negative, total_nodes: it.total_nodes,
+                     meta_source: it.meta_source, file: { name: it.name, path: it.path, bytes: it.bytes,
+                     w: it.w, h: it.h, format: it.format } }, fromLib: true };
+  }
+
+  async function libSearch() {
+    const q = $('#lib-q').value.trim(), tool = $('#lib-tool').value;
+    if (!q && !tool) return toast('填个关键词，或选一个工具');
+    if (!libState.searching) {              // 进搜索前把当前列表存起来，退出时还原
+      libState.savedFiles = metaState.files;
+      libState.savedSummary = $('#meta-summary').innerHTML;
+    }
+    try {
+      const r = await api('/api/library/search?limit=500&q=' + encodeURIComponent(q) + '&tool=' + encodeURIComponent(tool));
+      if (!r.ok) throw new Error(r.error || '搜索失败');
+      metaState.files = (r.items || []).map(libRow);
+      libState.searching = true;
+      $('#btn-lib-exit').hidden = false;
+      renderMetaTable();
+      $('#meta-summary').innerHTML = '图库搜索「' + esc(q || tool) + '」：命中 <b>' + r.total + '</b> 张（显示前 ' + r.returned + ' 张）'
+        + (r.fts ? ' · 全文索引' : ' · LIKE 兜底');
+      if (!r.total) toast('没搜到（图库里有 ' + libState.savedFiles.length + ' 张当前列表，可能还没存入）', 4200);
+    } catch (e) { toast('搜索失败：' + e.message, 4200); }
+  }
+
+  function libExitSearch() {
+    if (!libState.searching) return;
+    metaState.files = libState.savedFiles;
+    libState.searching = false;
+    $('#btn-lib-exit').hidden = true;
+    $('#meta-summary').innerHTML = libState.savedSummary || '还没有图片';
+    renderMetaTable();
+  }
+
+  async function libClear() {
+    if (!window.confirm('清空图库索引？只删索引，不动任何图片文件。')) return;
+    try {
+      const r = await api('/api/library/clear', { method: 'POST', body: {} });
+      toast('图库已清空（移除索引 ' + r.removed + ' 条）', 3600);
+    } catch (e) { toast('清空失败：' + e.message, 3600); }
+    libExitSearch();
+    libRefresh();
+  }
+
   // 缩略图：上传缓存被清理后，列表里引用的老路径会 404 —— 别显示裂图，给个占位
   function thumbBox(path, w) {
     return '<span class="thumbbox"><img class="thumb" loading="lazy" alt="" data-thumb="1" src="/api/thumb?w=' + w
@@ -1044,6 +1117,12 @@
     }, true);
     renderMetaTable();
     refreshCache();
+    libRefresh();
+    $('#btn-lib-add').onclick = libAdd;
+    $('#btn-lib-clear').onclick = libClear;
+    $('#btn-lib-search').onclick = libSearch;
+    $('#btn-lib-exit').onclick = libExitSearch;
+    $('#lib-q').addEventListener('keydown', e => { if (e.key === 'Enter') libSearch(); });
     try {                                   // 上次读过的目录填回去，「读取该目录」随时有东西可执行
       const last = localStorage.getItem('is_meta_dir');
       if (last && !$('#meta-scan-dir').value) { $('#meta-scan-dir').value = last; metaState.lastDir = last; }

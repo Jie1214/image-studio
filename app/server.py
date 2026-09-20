@@ -125,6 +125,15 @@ class Handler(BaseHTTPRequestHandler):
                 # 上传缓存多大、几批、什么时候的（浏览器上传的副本都在 work/uploads）
                 from .cache import cache_info
                 return self._json(cache_info())
+            if path == "/api/library/stats":
+                from .index import stats as lib_stats
+                return self._json(lib_stats())
+            if path == "/api/library/search":
+                from .index import search as lib_search
+                qs = self._query()
+                return self._json(lib_search(q=qs.get("q", ""), tool=qs.get("tool", ""), model=qs.get("model", ""),
+                                             has_prompt=(qs.get("has_prompt") == "1"),
+                                             limit=int(qs.get("limit") or 300)))
             if path == "/api/stats":
                 cfg = load_config()
                 od = output_dir()
@@ -230,6 +239,17 @@ class Handler(BaseHTTPRequestHandler):
                 # 上传缓存多大、几批、什么时候的（浏览器上传的副本都在 work/uploads）
                 from .cache import cache_info
                 return self._json(cache_info())
+            if path == "/api/library/add":
+                from .index import add_many
+                b = self._json_body()
+                items = b.get("items") or []
+                if not isinstance(items, list):
+                    raise ValueError("items 必须是数组")
+                res = add_many(items)
+                return self._json(res)
+            if path == "/api/library/clear":
+                from .index import clear as lib_clear
+                return self._json(lib_clear())
             if path == "/api/cache/clear":
                 from .cache import prune
                 b = self._json_body()

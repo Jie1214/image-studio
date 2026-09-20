@@ -218,6 +218,23 @@
       <button class="btn" id="meta-copy-pos-all">📋 复制所有正向提示词</button>
       <a class="btn" id="meta-export" hidden download>⬇ 导出全部报告（Markdown）</a>
     </div>
+    <div class="libbar">
+      <input class="input grow" id="lib-q" placeholder="搜整个图库：提示词 / 模型 / LoRA / 文件名（先「存入图库」）">
+      <select class="input" id="lib-tool">
+        <option value="">全部工具</option>
+        <option value="ComfyUI">ComfyUI</option>
+        <option value="NovelAI">NovelAI</option>
+        <option value="SwarmUI">SwarmUI</option>
+        <option value="InvokeAI">InvokeAI</option>
+        <option value="A1111">A1111 系</option>
+      </select>
+      <button class="btn primary" id="btn-lib-search">🔍 搜图库</button>
+      <button class="btn" id="btn-lib-exit" hidden>退出搜索</button>
+      <span class="spacer"></span>
+      <span class="hint" id="lib-stats">图库：读取中…</span>
+      <button class="btn" id="btn-lib-add">＋ 存入图库</button>
+      <button class="btn ghost sm" id="btn-lib-clear">清空图库</button>
+    </div>
     <div class="table-wrap">
       <table class="tbl slim">
         <colgroup>
