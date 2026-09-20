@@ -80,6 +80,8 @@ class Handler(BaseHTTPRequestHandler):
             return False
         cfg = load_config()
         roots = [Path(r).resolve() for r in (cfg.get("input_roots") or []) if str(r).strip()]
+        # 模型 / LoRA 目录也是用户在界面里亲手填的 → 同样放行（否则预览图会被 403 挡住）
+        roots += [Path(r).resolve() for r in (cfg.get("model_dirs") or []) if str(r).strip()]
         roots += [output_dir().resolve(), upload_dir().resolve(), thumb_dir().resolve(),
                   (PROJECT_DIR / "work").resolve()]
         for r in roots:
@@ -125,6 +127,17 @@ class Handler(BaseHTTPRequestHandler):
                 # 上传缓存多大、几批、什么时候的（浏览器上传的副本都在 work/uploads）
                 from .cache import cache_info
                 return self._json(cache_info())
+            if path == "/api/models":
+                cfg = load_config()
+                return self._json({"ok": True, "dirs": [d for d in (cfg.get("model_dirs") or []) if str(d).strip()]})
+            if path == "/api/models/detail":
+                from .models import model_info
+                p = self._query().get("path") or ""
+                if not p:
+                    raise ValueError("缺少 path")
+                if not Path(p).is_file():
+                    return self._json({"ok": False, "error": "文件不存在"}, 404)
+                return self._json({"ok": True, "model": model_info(p)})
             if path == "/api/library/stats":
                 from .index import stats as lib_stats
                 return self._json(lib_stats())
@@ -239,6 +252,25 @@ class Handler(BaseHTTPRequestHandler):
                 # 上传缓存多大、几批、什么时候的（浏览器上传的副本都在 work/uploads）
                 from .cache import cache_info
                 return self._json(cache_info())
+            if path == "/api/models/scan":
+                b = self._json_body()
+                dirs = [b.get("dir")] if str(b.get("dir") or "").strip() else list(b.get("dirs") or [])
+                dirs = [str(d).strip() for d in dirs if str(d or "").strip()]
+                if not dirs:
+                    raise ValueError("请填写模型目录")
+                from .models import scan_models, summarize
+                res = scan_models(dirs, recursive=bool(b.get("recursive", True)))
+                if res.get("roots"):                      # 用过的目录记进设置，下次自动带上
+                    cfg = load_config()
+                    roots = [str(r) for r in (cfg.get("model_dirs") or []) if str(r).strip()]
+                    for r in res["roots"]:
+                        if r not in roots:
+                            roots.append(r)
+                    save_config({"model_dirs": roots})
+                res["summary"] = summarize(res["models"])
+                res["models"] = [{k: v for k, v in m.items() if k not in ("metadata", "labels", "tensors")}
+                                 for m in res["models"]]
+                return self._json(res)
             if path == "/api/library/add":
                 from .index import add_many
                 b = self._json_body()

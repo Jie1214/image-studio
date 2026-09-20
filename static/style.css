@@ -109,6 +109,8 @@ input.need{border-color:var(--err) !important;animation:need .5s 3}
 .thumbbox.missing{width:56px;height:56px;border:1px solid var(--line);
   background:repeating-linear-gradient(45deg,#16161c,#16161c 6px,#1d1d26 6px,#1d1d26 12px)}
 .thumbbox.missing::after{content:'已清理';font-size:10px;color:var(--dim)}
+.thumbbox.noprev{width:56px;height:56px;border:1px dashed var(--line);background:#141419}
+.thumbbox.noprev::after{content:'无预览';font-size:10px;color:var(--dim)}
 
 /* 弹窗 */
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.74);display:flex;align-items:center;justify-content:center;z-index:50}
