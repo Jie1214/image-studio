@@ -45,6 +45,16 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 
 _lock = threading.RLock()
 _cache: Dict[str, Any] | None = None
+_cache_stamp: tuple | None = None
+
+
+def _stamp():
+    """config.json 的 (mtime_ns, size)：文件被外部改过就让缓存失效，别拿旧配置覆盖新内容。"""
+    try:
+        st = CONFIG_PATH.stat()
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
 
 
 def _merge(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
@@ -58,9 +68,10 @@ def _merge(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def load_config(force: bool = False) -> Dict[str, Any]:
-    global _cache
+    global _cache, _cache_stamp
     with _lock:
-        if _cache is not None and not force:
+        stamp = _stamp()
+        if _cache is not None and not force and stamp == _cache_stamp:
             return copy.deepcopy(_cache)
         data: Dict[str, Any] = {}
         if CONFIG_PATH.exists():
@@ -69,16 +80,18 @@ def load_config(force: bool = False) -> Dict[str, Any]:
             except Exception:
                 data = {}
         _cache = _merge(DEFAULT_CONFIG, data)
+        _cache_stamp = stamp
         return copy.deepcopy(_cache)
 
 
 def save_config(patch: Dict[str, Any]) -> Dict[str, Any]:
-    global _cache
+    global _cache, _cache_stamp
     with _lock:
-        cur = load_config()
+        cur = load_config(force=True)      # 以磁盘现状为准，避免用过期缓存把别人的改动抹掉
         new = _merge(cur, patch or {})
         CONFIG_PATH.write_text(json.dumps(new, ensure_ascii=False, indent=2), encoding="utf-8")
         _cache = new
+        _cache_stamp = _stamp()
         return copy.deepcopy(new)
 
 
