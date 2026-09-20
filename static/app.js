@@ -540,8 +540,9 @@
       .map(([k, v]) => '<span class="tag">' + esc(k) + ' <b>' + esc(v) + '</b></span>').join(' ');
     const models = (m.models || []).map(x => '<tr><td>' + esc(x.kind) + '</td><td class="mono">' + esc(x.name) + '</td></tr>').join('');
     const loras = (m.loras || []).map(x => '<tr><td class="mono">' + esc(x.name) + '</td><td>' + (x.strength_model ?? '-') + '</td><td>' + (x.strength_clip ?? '-') + '</td></tr>').join('');
+    const shownKinds = new Set((m.models || []).map(x => x.kind));
     const kinds = Object.keys(m.kinds || {})
-      .filter(k => !/^(Checkpoint|UNet|LoRA)/.test(k))       // 已在上面的「模型 / LoRA」表里列过，不重复
+      .filter(k => !shownKinds.has(k) && !/^LoRA$/i.test(k))       // 模型表已列过的（含 VAE/ControlNet/放大模型）不重复
       .map(k => '<tr><td>' + esc(k) + '</td><td class="mono">' + esc((m.kinds[k] || []).join('、')) + '</td></tr>').join('');
     const census = Object.entries(m.node_census || {}).slice(0, 14)
       .map(([k, v]) => '<span class="tag">' + esc(k) + ' ×' + v + '</span>').join(' ');
@@ -727,6 +728,14 @@
     a.href = a._url;
     a.download = '分类清单_' + clsStamp() + '.csv';
   }
+  async function ensureDirAllowed(dir) {
+    try {
+      const j = await api('/api/allow_dir', { method: 'POST', body: { dir: dir } });
+      if (j.added) toast('已把该目录加入「可扫描目录」：' + dir, 4000);
+      return !!(j && j.ok);
+    } catch (e) { return false; }
+  }
+
   async function clsScan() {
     const dir = $('#cls-dir').value.trim();
     if (!dir) return toast('先填要分类的目录');
@@ -734,6 +743,7 @@
     $('#btn-cls-scan').disabled = true;
     $('#cls-summary').textContent = '正在扫描并逐张判定…（图多时稍等）';
     try {
+      await ensureDirAllowed(dir);
       const j = await api('/api/classify/scan', {
         method: 'POST', body: {
           dir: dir, recursive: $('#cls-rec').checked, rule: $('#cls-rule').value,
@@ -851,6 +861,7 @@
       if (!dir) return toast('请先填写要读取的目录');
       $('#meta-summary').textContent = '正在扫描 ' + dir + ' …';
       try {
+        await ensureDirAllowed(dir);       // 用户手写的目录自动进白名单，免得读取时被挡
         const j = await api('/api/scan', { method: 'POST', body: { dir: dir, recursive: $('#meta-scan-rec').checked } });
         if (!j.total) return toast('这个目录里没有图片');
         await parseMetaBatch((j.files || []).map(f => f.path));

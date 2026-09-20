@@ -203,6 +203,25 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"ok": True, "opened": str(p)})
                 except Exception as exc:       # noqa: BLE001
                     return self._json({"ok": False, "error": str(exc)}, 500)
+            if path == "/api/allow_dir":
+                # 用户手写目录 = 明确意图：把它加进「可扫描目录」，避免读取时被白名单挡住
+                b = self._json_body()
+                d = (b.get("dir") or "").strip()
+                if not d:
+                    return self._json({"ok": False, "error": "请填写目录"}, 400)
+                p = Path(d)
+                if not p.exists():
+                    return self._json({"ok": False, "error": "目录不存在：%s" % d}, 400)
+                if p.is_file():
+                    p = p.parent
+                rp = str(p.resolve())
+                cfg = load_config()
+                roots = [str(r) for r in (cfg.get("input_roots") or []) if str(r).strip()]
+                if not any(str(Path(r).resolve()) == rp for r in roots):
+                    roots.append(rp)
+                    save_config({"input_roots": roots})
+                    return self._json({"ok": True, "added": True, "roots": roots})
+                return self._json({"ok": True, "added": False, "roots": roots})
             if path == "/api/classify/scan":
                 b = self._json_body()
                 root = (b.get("dir") or "").strip()
