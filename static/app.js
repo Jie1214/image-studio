@@ -339,7 +339,141 @@
     estTimer = setTimeout(estimate, 550);
   }
 
-  /* ---------------- 读图参数（模型 / LoRA / 提示词） ---------------- */
+  /* ---------------- 读图参数（模型 / LoRA / 提示词）· 支持批量 ---------------- */
+  const metaState = { files: [], last: null };
+
+  function metaRowItem(f, i) {
+    const m = f.meta;
+    const thumb = '<img class="thumb" loading="lazy" src="/api/thumb?w=64&amp;path=' + encodeURIComponent(f.path) + '" alt="">';
+    if (f.busy) {
+      return '<tr data-i="' + i + '"><td>' + thumb + '</td><td>' + esc(f.name) + '</td><td colspan="6" class="hint">解析中…</td></tr>';
+    }
+    if (!m) {
+      return '<tr data-i="' + i + '"><td>' + thumb + '</td><td>' + esc(f.name) + '</td><td colspan="6" class="bad">未解析</td></tr>';
+    }
+    const models = (m.models || []).slice(0, 3).map(x => '<span class="tag" title="' + esc(x.kind) + '">' + esc(x.name) + '</span>').join(' ');
+    const more = (m.models || []).length > 3 ? ' <span class="hint">+' + ((m.models || []).length - 3) + '</span>' : '';
+    const loras = (m.loras || []).slice(0, 3).map(x => '<span class="tag">' + esc(x.name.replace(/\.safetensors$|\.pt$|\.ckpt$/i, '')) + (x.strength_model != null ? ' ' + x.strength_model : '') + '</span>').join(' ');
+    const loraMore = (m.loras || []).length > 3 ? ' <span class="hint">+' + ((m.loras || []).length - 3) + '</span>' : '';
+    const pos = (m.positive || '').replace(/\s+/g, ' ');
+    return '<tr data-i="' + i + '">'
+      + '<td>' + thumb + '</td>'
+      + '<td><div>' + esc(f.name) + '</div><div class="hint mono">' + esc((f.path || '').replace(/[^\\/]+$/, '')) + '</div></td>'
+      + '<td class="mono">' + (f.w || 0) + '×' + (f.h || 0) + '</td>'
+      + '<td><span class="' + (m.ok ? 'good' : 'warn') + '">' + esc(m.tool || '') + '</span></td>'
+      + '<td>' + (models || '<span class="hint">—</span>') + more + '</td>'
+      + '<td>' + (loras || '<span class="hint">—</span>') + loraMore + '</td>'
+      + '<td class="hint" title="' + esc(pos.slice(0, 400)) + '">' + esc(pos.slice(0, 90) || '—') + '</td>'
+      + '<td><button class="btn sm" data-act="meta-detail">详情</button></td>'
+      + '</tr>';
+  }
+
+  function renderMetaTable() {
+    const tb = $('#meta-tbody');
+    if (!metaState.files.length) {
+      tb.innerHTML = '<tr><td colspan="8" class="empty">列表为空：拖入图片 / 选文件夹 / 填目录后点「读取该目录」</td></tr>';
+    } else {
+      tb.innerHTML = metaState.files.map((f, i) => metaRowItem(f, i)).join('');
+    }
+    const total = metaState.files.length;
+    const done = metaState.files.filter(x => x.meta && !x.busy).length;
+    const okN = metaState.files.filter(x => x.meta && x.meta.ok).length;
+    const withModels = new Set();
+    let loraN = 0;
+    metaState.files.forEach(f => {
+      if (!f.meta) return;
+      (f.meta.models || []).forEach(m => withModels.add(m.name));
+      loraN += (f.meta.loras || []).length;
+    });
+    $('#meta-summary').innerHTML = total
+      ? ('共 <b>' + total + '</b> 张（已解析 <b>' + done + '</b>，其中 <b class="good">' + okN + '</b> 张带生成参数）'
+        + ' · 涉及模型 <b>' + withModels.size + '</b> 个 · LoRA 引用 <b>' + loraN + '</b> 次')
+      : '还没有图片';
+    const canExport = okN > 0;
+    const ex = $('#meta-export');
+    ex.hidden = !canExport;
+    if (canExport) {
+      try {
+        const md = metaState.files.filter(f => f.meta && f.meta.ok).map(f => metaReport(f.meta)).join('\n\n---\n\n');
+        const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+        if (ex._url) URL.revokeObjectURL(ex._url);
+        ex._url = URL.createObjectURL(blob);
+        ex.href = ex._url;
+        ex.download = '图片参数报告_' + okN + '张.md';
+      } catch (e) { ex.hidden = true; }
+    }
+  }
+
+  function showMetaProgress(done, total) {
+    $('#meta-progress').hidden = false;
+    $('#meta-bar').style.width = (total ? Math.round(100 * done / total) : 0) + '%';
+  }
+  function hideMetaProgress() {
+    $('#meta-progress').hidden = true;
+    $('#meta-bar').style.width = '0%';
+  }
+
+  async function parseMetaBatch(paths) {
+    const added = [];
+    (paths || []).forEach(p => {
+      if (!p) return;
+      const it = metaState.files.find(x => x.path === p);
+      if (it) { if (!it.meta) { it.busy = true; added.push(p); } return; }
+      metaState.files.push({ path: p, name: String(p).split(/[\\/]/).pop(), meta: null, busy: true });
+      added.push(p);
+    });
+    renderMetaTable();
+    if (!added.length) { toast('这些图已经在列表里了'); return 0; }
+    const chunk = 8;
+    let done = 0;
+    showMetaProgress(0, added.length);
+    for (let i = 0; i < added.length; i += chunk) {
+      const part = added.slice(i, i + chunk);
+      try {
+        const j = await api('/api/meta', { method: 'POST', body: { paths: part } });
+        (j.metas || []).forEach(m => {
+          const it = metaState.files.find(x => x.path === (m.file && m.file.path));
+          if (!it) return;
+          it.meta = m; it.busy = false;
+          it.name = (m.file && m.file.name) || it.name;
+          it.w = m.file && m.file.w; it.h = m.file && m.file.h;
+          it.bytes = m.file && m.file.bytes; it.format = m.file && m.file.format;
+        });
+      } catch (e) {
+        part.forEach(p => {
+          const it = metaState.files.find(x => x.path === p);
+          if (!it) return;
+          it.busy = false;
+          it.meta = { ok: false, tool: '解析失败', file: { name: it.name, path: p }, notes: ['请求失败：' + e.message],
+            models: [], loras: [], kinds: {}, sampler: {}, positive: '', negative: '', embeddings: [], node_census: {} };
+        });
+        toast('解析失败：' + e.message, 4200);
+      }
+      done += part.length;
+      showMetaProgress(done, added.length);
+      renderMetaTable();
+    }
+    hideMetaProgress();
+    const okN = metaState.files.filter(x => x.meta && x.meta.ok).length;
+    if (added.length) toast('解析完成：' + added.length + ' 张，其中 ' + okN + ' 张带生成参数', 3400);
+    return added.length;
+  }
+
+  function showMetaDetail(it) {
+    if (!it || !it.meta) return;
+    metaState.last = it;
+    $('#meta-detail-title').textContent = '参数详情 · ' + it.name;
+    $('#meta-detail-card').hidden = false;
+    renderMeta(it.meta);
+  }
+
+  async function copyAllPositive() {
+    const items = metaState.files.filter(f => f.meta && f.meta.ok && f.meta.positive);
+    if (!items.length) return toast('还没有解析出正向提示词');
+    const text = items.map(f => '【' + f.name + '】\n' + f.meta.positive).join('\n\n');
+    await copyText(text, '（' + items.length + ' 张的正向提示词）');
+  }
+
   function metaReport(m) {
     const L = [];
     L.push('# 图片生成参数报告');
@@ -434,29 +568,30 @@
   }
 
   async function readMeta(path, scroll) {
-    const panel = $('#meta-panel');
-    panel.hidden = false;
-    panel.innerHTML = '<div class="hint" style="padding:10px">正在读取元数据…</div>';
-    try {
-      const j = await api('/api/meta', { method: 'POST', body: { path: path } });
-      renderMeta(j.meta);
-      if (scroll) $('#card-meta').scrollIntoView({ behavior: 'smooth', block: 'start' });
-      if (!j.meta.ok) toast('这张图没有生成参数（' + (j.meta.notes[0] || '') + '）', 5200);
-    } catch (e) {
-      panel.innerHTML = '<div class="hint" style="padding:10px">读取失败：' + esc(e.message) + '</div>';
-    }
+    if (!path) return;
+    const it = metaState.files.find(x => x.path === path);
+    if (it && it.meta && it.meta.ok) { showMetaDetail(it); if (scroll) $('#meta-detail-card').scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+    await parseMetaBatch([path]);
+    const got = metaState.files.find(x => x.path === path);
+    if (got && got.meta) { showMetaDetail(got); if (scroll) $('#meta-detail-card').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
   }
 
-  async function uploadAndReadMeta(file) {
-    if (!file) return;
-    try {
+  async function uploadAndReadMeta(fileList) {
+    const files = Array.from(fileList || []).filter(f => /^image\//.test(f.type) || /\.(jpe?g|png|webp|avif|bmp|tiff?|gif|jfif)$/i.test(f.name));
+    if (!files.length) return toast('没有可用的图片文件');
+    const chunk = 20;
+    const paths = [];
+    for (let i = 0; i < files.length; i += chunk) {
+      const part = files.slice(i, i + chunk);
       const fd = new FormData();
-      fd.append('files', file, file.webkitRelativePath || file.name);
-      const j = await api('/api/upload', { method: 'POST', body: fd });
-      const f = (j.files || [])[0];
-      addFiles(j.files || []);
-      if (f) await readMeta(f.path, true);
-    } catch (e) { toast('上传失败：' + e.message, 4200); }
+      part.forEach(f => fd.append('files', f, f.webkitRelativePath || f.name));
+      $('#meta-summary').textContent = '正在导入 ' + Math.min(i + chunk, files.length) + '/' + files.length + '…';
+      try {
+        const j = await api('/api/upload', { method: 'POST', body: fd });
+        (j.files || []).forEach(f => paths.push(f.path));
+      } catch (e) { toast('导入失败：' + e.message, 4200); }
+    }
+    await parseMetaBatch(paths);
   }
 
   /* ---------------- 设置 ---------------- */
@@ -492,6 +627,16 @@
     }
   }
 
+  /* ---------------- 顶栏 tab 切换 ---------------- */
+  function switchView(v) {
+    const target = (v === 'meta') ? 'meta' : 'compress';
+    $('#view-compress').hidden = (target !== 'compress');
+    $('#view-meta').hidden = (target !== 'meta');
+    $$('#tabs .tab').forEach(b => b.classList.toggle('active', b.dataset.view === target));
+    state.view = target;
+    try { localStorage.setItem('imgstudio.view', target); } catch (e) { }
+  }
+
   /* ---------------- 事件绑定 ---------------- */
   function bind() {
     // 拖拽
@@ -515,16 +660,46 @@
       uploadFiles(e.target.files);
     };
     $('#btn-scan').onclick = doScan;
-    // 读图参数：拖一张图 / 选一张图 → 上传后直接解析
+    /* ---- 读图参数 tab ---- */
     const md = $('#metadrop');
     ['dragenter', 'dragover'].forEach(ev => md.addEventListener(ev, e => { e.preventDefault(); md.classList.add('hot'); }));
     ['dragleave', 'drop'].forEach(ev => md.addEventListener(ev, e => { e.preventDefault(); md.classList.remove('hot'); }));
     md.addEventListener('drop', async e => {
       const files = await entriesFromDataTransfer(e.dataTransfer);
-      if (files && files.length) uploadAndReadMeta(files[0]);
+      if (files && files.length) uploadAndReadMeta(files);
     });
     $('#btn-meta-pick').onclick = () => $('#meta-input').click();
-    $('#meta-input').onchange = e => uploadAndReadMeta(e.target.files[0]);
+    $('#meta-input').onchange = e => uploadAndReadMeta(e.target.files);
+    $('#btn-meta-pickdir').onclick = () => $('#meta-dir-input').click();
+    $('#meta-dir-input').onchange = e => {
+      const n = (e.target.files || []).length;
+      if (!n) return toast('这个文件夹里没找到图片');
+      toast('已选中 ' + n + ' 个文件，开始读取…');
+      uploadAndReadMeta(e.target.files);
+    };
+    $('#btn-meta-scan').onclick = async () => {
+      const dir = $('#meta-scan-dir').value.trim();
+      if (!dir) return toast('请先填写要读取的目录');
+      $('#meta-summary').textContent = '正在扫描 ' + dir + ' …';
+      try {
+        const j = await api('/api/scan', { method: 'POST', body: { dir: dir, recursive: $('#meta-scan-rec').checked } });
+        if (!j.total) return toast('这个目录里没有图片');
+        await parseMetaBatch((j.files || []).map(f => f.path));
+      } catch (e) { toast('扫描失败：' + e.message, 4200); $('#meta-summary').textContent = '扫描失败'; }
+    };
+    $('#meta-scan-dir').addEventListener('keydown', e => { if (e.key === 'Enter') $('#btn-meta-scan').click(); });
+    $('#meta-clear').onclick = () => { metaState.files = []; renderMetaTable(); $('#meta-detail-card').hidden = true; toast('已清空'); };
+    $('#meta-copy-pos-all').onclick = copyAllPositive;
+    $('#meta-detail-close').onclick = () => { $('#meta-detail-card').hidden = true; };
+    $('#meta-tbody').onclick = e => {
+      const tr = e.target.closest('tr'); if (!tr) return;
+      const it = metaState.files[+tr.dataset.i]; if (!it) return;
+      if (it.meta) showMetaDetail(it);
+    };
+    $('#meta-detail-card').addEventListener('dblclick', e => { if (e.detail === 2) $('#meta-detail-card').hidden = true; });
+    // 顶栏 tab
+    $$('#tabs .tab').forEach(b => { b.onclick = () => switchView(b.dataset.view); });
+    renderMetaTable();
     $('#btn-clear').onclick = () => { state.files = []; renderTable(); $('#progress').hidden = true; $('#bar').style.width = '0'; $('#job-hint').textContent = '已清空'; };
     $('#recent-roots').onclick = e => { const b = e.target.closest('button'); if (b) { $('#scan-dir').value = b.dataset.dir; doScan(); } };
     $('#scan-dir').addEventListener('keydown', e => { if (e.key === 'Enter') doScan(); });
@@ -551,7 +726,7 @@
       const tr = e.target.closest('tr'); if (!tr) return;
       const f = state.files[+tr.dataset.i]; if (!f) return;
       const act = e.target.dataset.act;
-      if (act === 'meta') { readMeta(f.path, true); return; }
+      if (act === 'meta') { switchView('meta'); readMeta(f.path, true); return; }
       if (act === 'cmp' || e.target.classList.contains('thumb')) {
         openCompare(f);
       }
@@ -603,6 +778,7 @@
   (async function init() {
     bind();
     renderRoots();
+    try { switchView(localStorage.getItem('imgstudio.view') || 'compress'); } catch (e) { switchView('compress'); }
     try {
       const j = await api('/api/config');
       state.cfg = j.config;

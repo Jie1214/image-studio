@@ -15,7 +15,13 @@
   <button class="btn ghost" id="btn-settings">⚙ 设置</button>
 </header>
 
+<nav class="tabs" id="tabs">
+  <button class="tab active" data-view="compress">🖼️ 批量压缩</button>
+  <button class="tab" data-view="meta">🔍 读图参数</button>
+</nav>
+
 <main>
+<div id="view-compress" class="view">
   <!-- ① 来源 -->
   <section class="card">
     <div class="card-head">
@@ -168,24 +174,71 @@
       </table>
     </div>
   </section>
+</div><!-- /view-compress -->
 
-  <!-- ④ 读图参数 -->
-  <section class="card" id="card-meta">
+<!-- ===================== 读图参数（独立 tab，支持批量） ===================== -->
+<div id="view-meta" class="view" hidden>
+  <section class="card">
     <div class="card-head">
-      <span class="ttl">④ 读图参数（模型 / LoRA / 提示词）</span>
-      <span class="hint">ComfyUI 会把整个工作流写进图片元数据；拖一张图进来，或点上方结果表里任意一行的「参数」按钮</span>
+      <span class="ttl">图片来源</span>
+      <span class="hint">支持多选 / 整个文件夹；图不用先压缩，直接丢进来读</span>
       <span class="spacer"></span>
-      <a class="btn" id="meta-dl" hidden download>⬇ 保存这份报告</a>
+      <button class="btn ghost" id="meta-clear">清空列表</button>
     </div>
-    <div class="drop sm" id="metadrop">
-      <div>把一张图拖到这里（或点右边按钮）</div>
+    <div class="drop" id="metadrop">
+      <div class="drop-ico">🔍</div>
+      <div>把图片（可多选）或整个文件夹拖到这里</div>
       <div class="row center">
-        <button class="btn" id="btn-meta-pick">选择图片</button>
-        <input type="file" id="meta-input" accept="image/*" hidden>
+        <button class="btn primary" id="btn-meta-pick">选择图片</button>
+        <button class="btn" id="btn-meta-pickdir">选择文件夹</button>
+        <input type="file" id="meta-input" accept="image/*" multiple hidden>
+        <input type="file" id="meta-dir-input" webkitdirectory directory multiple hidden>
       </div>
+      <div class="hint">「选择文件夹」会把该文件夹里所有图片（含子文件夹）读进来批量解析</div>
     </div>
-    <div id="meta-panel" hidden></div>
+    <div class="row">
+      <input class="input grow" id="meta-scan-dir" placeholder="或填写要读取的目录（服务端直接读盘，不上传）">
+      <label class="chk"><input type="checkbox" id="meta-scan-rec" checked> 含子文件夹</label>
+      <button class="btn" id="btn-meta-scan">读取该目录</button>
+    </div>
+    <div class="progress" id="meta-progress" hidden><div class="bar" id="meta-bar"></div></div>
+    <div class="summary" id="meta-summary">还没有图片</div>
   </section>
+
+  <section class="card">
+    <div class="card-head">
+      <span class="ttl">批量解析结果</span>
+      <span class="hint">点任意一行看完整参数（模型 / LoRA / 正负提示词 / 采样）</span>
+      <span class="spacer"></span>
+      <button class="btn" id="meta-copy-pos-all">📋 复制所有正向提示词</button>
+      <a class="btn" id="meta-export" hidden download>⬇ 导出全部报告（Markdown）</a>
+    </div>
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th style="width:64px">预览</th><th>文件名</th><th style="width:110px">尺寸</th>
+            <th style="width:104px">工具</th><th style="width:210px">模型</th>
+            <th style="width:190px">LoRA</th><th>正向提示词</th><th style="width:78px">操作</th>
+          </tr>
+        </thead>
+        <tbody id="meta-tbody">
+          <tr><td colspan="8" class="empty">列表为空：拖入图片 / 选文件夹 / 填目录后点「读取该目录」</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card" id="meta-detail-card" hidden>
+    <div class="card-head">
+      <span class="ttl" id="meta-detail-title">参数详情</span>
+      <span class="spacer"></span>
+      <a class="btn" id="meta-dl" hidden download>⬇ 保存这一张的报告</a>
+      <button class="btn ghost" id="meta-detail-close">收起</button>
+    </div>
+    <div id="meta-panel"></div>
+  </section>
+</div><!-- /view-meta -->
 </main>
 
 <!-- 对比弹窗 -->

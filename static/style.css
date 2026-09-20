@@ -105,6 +105,15 @@ textarea.input{resize:vertical;font:13px/1.6 ui-monospace,Consolas,monospace}
 .cmp-side figcaption{font-size:12.5px;color:var(--dim);padding:4px 0}
 .cmp-side img{width:100%;background:#fff;border-radius:10px}
 
+/* 顶栏 tab */
+.tabs{display:flex;gap:6px;padding:9px 18px 0;border-bottom:1px solid var(--line);background:#141419;
+  position:sticky;top:47px;z-index:19;flex-wrap:wrap}
+.tab{background:transparent;border:1px solid transparent;border-bottom:2px solid transparent;color:var(--dim);
+  padding:8px 16px;font:14.5px var(--font);cursor:pointer;border-radius:10px 10px 0 0}
+.tab:hover{color:var(--fg);background:#1b1b23}
+.tab.active{color:var(--gold2);border-bottom-color:var(--gold);background:var(--card);font-weight:600}
+.view[hidden]{display:none}
+
 /* 读图参数面板 */
 .drop.sm{padding:12px;font-size:13.5px}
 .meta-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}

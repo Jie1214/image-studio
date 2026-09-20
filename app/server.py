@@ -164,6 +164,25 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True, "job": job.snapshot()})
             if path == "/api/meta":
                 b = self._json_body()
+                from .metadata import read_params
+                plist = b.get("paths")
+                if plist:
+                    out = []
+                    for pp in plist[:800]:
+                        try:
+                            if not Path(pp).is_file() or not self._allowed(pp):
+                                out.append({"ok": False, "file": {"name": Path(pp).name, "path": pp},
+                                            "notes": ["跳过：文件不存在或不在允许范围"], "models": [], "loras": [],
+                                            "kinds": {}, "sampler": {}, "positive": "", "negative": "",
+                                            "embeddings": [], "node_census": {}, "tool": "跳过"})
+                                continue
+                            out.append(read_params(pp))
+                        except Exception as exc:       # noqa: BLE001
+                            out.append({"ok": False, "file": {"name": Path(pp).name, "path": pp},
+                                        "notes": ["解析出错：%s" % exc], "models": [], "loras": [], "kinds": {},
+                                        "sampler": {}, "positive": "", "negative": "", "embeddings": [],
+                                        "node_census": {}, "tool": "出错"})
+                    return self._json({"ok": True, "metas": out})
                 p = b.get("path") or ""
                 if not (Path(p).is_file() if p else False):
                     return self._json({"ok": False, "error": "文件不存在"}, 404)

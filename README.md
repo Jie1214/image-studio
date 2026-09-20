@@ -1,6 +1,6 @@
 # 图像工坊 · 批量压缩（image-studio）
 
-本地网页版图片压缩工具，**支持批量**，用法参考 [squoosh.app](https://squoosh.app/)：
+本地网页版图片工具，**两个 tab**：批量压缩 + 读图参数（都支持批量），用法参考 [squoosh.app](https://squoosh.app/)：
 左边拖图 / 右边调参数 / 实时看体积变化 / 前后滑动对比，最后一键打包下载。
 
 - **零第三方服务**：本地跑，图不出机器。
@@ -58,25 +58,36 @@
 - **并排对比**：左右各一张，看细节
 - 顶部显示：原体积 → 压缩后体积、节省百分比、压缩后尺寸、实际使用的质量值
 
-## 四、读图参数（模型 / LoRA / 提示词）
+## 四、读图参数（独立 tab，支持批量）
 
-把图丢进最下面那张「④ 读图参数」卡片（或点结果表里任意一行的「参数」按钮），自动解析出生成参数：
+顶栏第二个 tab「🔍 读图参数」：**看一张图（或一整批图）是用什么模型、什么 LoRA、什么提示词跑出来的**。入口全部支持批量：
+
+| 入口 | 适合 |
+| --- | --- |
+| 拖拽多张图 / 整个文件夹 | 几十张 |
+| 「选择图片」多选 / 「选择文件夹」 | 一个目录（含子文件夹） |
+| 填目录 → 「读取该目录」 | 大量图，**服务端直接读盘、不上传** |
+| 压缩 tab 里每行的「参数」按钮 | 顺手看刚压的那张（自动跳到本 tab 并展开详情） |
+
+**结果页**：一张图一行（预览 / 文件名 / 尺寸 / 工具 / 模型 / LoRA / 正向提示词摘要），顶部汇总「N 张里 M 张带生成参数 · 涉及模型 X 个 · LoRA 引用 Y 次」；点任意一行看完整详情：
 
 | 输出 | 内容 |
 | --- | --- |
 | **模型** | Checkpoint / UNet / VAE / CLIP·文本编码器 / ControlNet / 放大模型 / IPAdapter… |
-| **LoRA** | 名称 + `model` 权重 + `clip` 权重（按加载链顺序列出） |
-| **提示词** | 正向 / 负向各一栏，一键复制；自动提取 `embedding:xxx`（Textual Inversion） |
-| **采样参数** | seed / steps / cfg / sampler / scheduler / denoise / 宽高 / batch（A1111 另有 clip skip 等） |
-| **其它** | 节点构成统计、元数据来源、原始 JSON 可展开复制；**「⬇ 保存这份报告」**导出一份 Markdown |
+| **LoRA** | 名称 + `model` 权重 + `clip` 权重（按加载链顺序） |
+| **提示词** | 正向 / 负向各一栏，一键复制；自动提取 `embedding:xxx` |
+| **采样参数** | seed / steps / cfg / sampler / scheduler / denoise / 宽高（A1111 另有 clip skip 等） |
+| **其它** | 节点构成、元数据来源、原始 JSON 可展开 |
+
+**批量动作**：「📋 复制所有正向提示词」（按文件名分组）／「⬇ 导出全部报告（Markdown，一张一节）」。
 
 **认得这几种写法**：
 
-1. **ComfyUI**：PNG 的 `prompt`/`workflow` tEXt 块；JPEG/WebP 的 EXIF UserComment；XMP；以及**字节兜底**（容器读不到时直接在文件里搜工作流 JSON，按「含 class_type 最多的对象」取，避免只截到一个子节点）。
+1. **ComfyUI**：PNG 的 `prompt`/`workflow` tEXt 块；JPEG/WebP 的 EXIF UserComment；XMP；以及**字节兜底**（容器读不到时直接在文件里搜工作流 JSON，按「含 `class_type` 最多的对象」取，避免只截到一个子节点）。
 2. **A1111 / Forge / SD.Next**：`parameters` 文本，包括 `<lora:名字:权重>` 与 `Lora hashes:`。
-3. 提示词不是直接从节点抄的，而是**顺 conditioning 链回溯**：`KSampler.positive/negative` → 透传节点（ControlNetApplyAdvanced / ConditioningCombine / SetArea / Concat…）→ `CLIPTextEncode`，并按**输出槽位**区分正负，正负不会串味。
+3. 提示词**不是直接从节点抄的**，而是顺 conditioning 链回溯：`KSampler.positive/negative` → 透传节点（ControlNetApplyAdvanced / ConditioningCombine / SetArea / Concat…）→ `CLIPTextEncode`，并按**输出槽位**区分正负，保证正负不串味。
 
-> 没有元数据的图（截图、手绘、被平台二次抹过的图）会明确告诉你「未检测到生成参数」，不会瞎猜。
+> 没有元数据的图（截图、手绘、被平台抹过 EXIF 的图）会明确标「未检测到生成参数」，不会瞎猜。
 
 ## 五、输出
 
@@ -118,7 +129,7 @@
 | POST | `/api/cancel` `{id}` | 停止任务 |
 | GET | `/api/zip?id=` | 打包下载 |
 | GET | `/api/thumb?path=&w=` | 缩略图（界面用） |
-| POST | `/api/meta` `{path}` | 读图片生成参数（模型 / LoRA / 提示词 / 采样参数） |
+| POST | `/api/meta` `{path}` 或 `{paths:[…]}` | 读图片生成参数（单张 / 批量，批量返回 `metas[]`） |
 | POST | `/api/reveal` `{path}` | 在资源管理器里打开目录 |
 
 ## 八、目录结构
