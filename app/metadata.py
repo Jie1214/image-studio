@@ -56,6 +56,17 @@ COND_PASS = {
 }
 TEXT_KEYS = ("text", "text_g", "text_l", "string", "prompt", "positive_prompt", "value", "prompt_text")
 SAMPLERS = {"KSampler", "KSamplerAdvanced", "SamplerCustom", "SamplerCustomAdvanced", "KSamplerSelect"}
+# 优先取的文本键（IMPACT 的 populated_text 是"已展开"的提示词，比原始 wildcard 更准）
+PREFERRED_TEXT_KEYS = ("populated_text", "text", "text_g", "text_l", "positive_prompt", "wildcard_text",
+                       "prompt", "string", "caption", "prompt_text", "value")
+# 键名像文本的（wildcard_text / populated_text / caption…）：用「包含」判，不再只认固定几个名字
+TEXT_KEY_RE = re.compile(r"(text|prompt|wildcard|caption|string|subtitle|note)", re.I)
+# 明显不是文本的键，避免把模型名 / 尺寸 / 权重当提示词
+NON_TEXT_KEY_RE = re.compile(r"(model|clip|vae|lora|sampler|scheduler|seed|steps|cfg|denoise|width|height|batch"
+                             r"|image|mask|latent|control|bbox|device|precision|dtype|mode|strength|threshold"
+                             r"|resize|aspect|ratio|megapixel|name|path|file|dir)", re.I)
+# 字符串中转类节点（easy showAnything / Any Switch (rgthree) / String Literal…）：提示词可能靠它们转过来
+STRING_SOURCE_RE = re.compile(r"(string|text|show|switch|primitive|wildcard|prompt|concat|join)", re.I)
 # 采样器识别用的输入名（不认类名，认接线：自定义/改名的采样节点也能认出来）
 SAMPLER_PARAM_KEYS = ("seed", "noise_seed", "steps", "cfg", "sampler_name", "scheduler", "denoise", "eta")
 MODEL_EXTS = (".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".png", ".jpg", ".jpeg", ".webp", ".onnx", ".gguf")
@@ -279,20 +290,47 @@ def _follow_text(nodes: Dict[str, Any], node_id: str, slot: Optional[int] = None
         _k = "positive" if slot == 0 else ("negative" if slot == 1 else None)
         if _k and _is_link(ins.get(_k)):
             return _follow_text(nodes, str(ins[_k][0]), int(ins[_k][1]), depth + 1, seen)
-    if (ct.startswith("CLIPTextEncode") or "CLIPTextEncode" in ct or ct in ("BNK_CLIPTextEncodeAdvanced",)
-            or any(isinstance(ins.get(_t), str) and ins.get(_t, "").strip() for _t in TEXT_KEYS)):
-        for k in TEXT_KEYS:
-            v = ins.get(k)
-            if isinstance(v, str) and v.strip() and "lora" not in ct.lower() and not v.lower().endswith(MODEL_EXTS):
-                texts.append(v.strip())
+    # ---- 找文本 ----
+    is_lora_tag = "lora" in ct.lower()          # LoRA 标签加载器的 text 是 <lora:…>，不算提示词
+    is_text_node = (ct.startswith("CLIPTextEncode") or "CLIPTextEncode" in ct or "textencode" in ct.lower()
+                    or "wildcard" in ct.lower())
+    if not is_lora_tag:
+        # 1) 节点自带字符串文本：text / text_g / wildcard_text / populated_text / caption…（键名用「包含」判）
+        for k in PREFERRED_TEXT_KEYS + tuple(ins.keys()):
+            if k not in ins:
+                continue
+            v = ins[k]
+            if not isinstance(v, str) or not v.strip():
+                continue
+            if k in PREFERRED_TEXT_KEYS or (TEXT_KEY_RE.search(k) and not NON_TEXT_KEY_RE.search(k)):
+                t = v.strip()
+                if t.lower().endswith(MODEL_EXTS) or t == "ECHO_EMPTY":
+                    continue
+                texts.append(t)
                 break
+    if texts:
         return [t for t in texts if t]
-    # 兜底：没有槽位信息时按顺序跟所有 link（并收下像提示词的长字符串）
+    if not is_lora_tag:
+        # 2) 文本是链接给的：easy showAnything / Any Switch (rgthree) / String Literal 这类中转节点
+        class_is_string = bool(STRING_SOURCE_RE.search(ct))
+        for k, v in ins.items():
+            if not _is_link(v):
+                continue
+            target = nodes.get(str(v[0])) or {}
+            tct = target.get("class_type", "")
+            key_ok = bool(TEXT_KEY_RE.search(k) and not NON_TEXT_KEY_RE.search(k))
+            if key_ok or STRING_SOURCE_RE.search(tct) or (class_is_string and not NON_TEXT_KEY_RE.search(k)):
+                got = _follow_text(nodes, str(v[0]), int(v[1]), depth + 1, seen)
+                if got:
+                    return got
+    if is_text_node and not is_lora_tag:
+        return []           # 明确的文本节点但确实没文本，别再乱跟
+    # 3) 兜底：不认识又没文本的节点，按顺序跟所有 link（并收下像提示词的长字符串）
     for k, v in ins.items():
         if _is_link(v):
             texts += _follow_text(nodes, str(v[0]), int(v[1]), depth + 1, seen)
-        elif isinstance(v, str) and k in TEXT_KEYS and len(v.strip()) > 1 and not v.lower().endswith(
-                (".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".png", ".jpg", ".webp")):
+        elif isinstance(v, str) and (k in TEXT_KEYS or TEXT_KEY_RE.search(k)) and len(v.strip()) > 1 \
+                and not v.lower().endswith(MODEL_EXTS):
             if v.strip() not in texts:
                 texts.append(v.strip())
     return [t for t in texts if t]
@@ -363,12 +401,15 @@ def parse_comfy(prompt_json: str) -> Dict[str, Any]:
             if "lora" in ct.lower():
                 continue
             ins = node.get("inputs", {}) or {}
-            if not (ct.startswith("CLIPTextEncode") or "CLIPTextEncode" in ct or "textencode" in ct.lower()):
+            looks_text = (ct.startswith("CLIPTextEncode") or "CLIPTextEncode" in ct or "textencode" in ct.lower()
+                          or "wildcard" in ct.lower()
+                          or any(TEXT_KEY_RE.search(k) and not NON_TEXT_KEY_RE.search(k)
+                                 and isinstance(v, str) and v.strip() for k, v in ins.items()))
+            if not looks_text:
                 continue
-            for k in TEXT_KEYS:
-                v = ins.get(k)
-                if isinstance(v, str) and v.strip() and not v.lower().endswith(MODEL_EXTS) and v.strip() not in negative:
-                    positive.append(v.strip())
+            for t in _follow_text(nodes, str(nid), None):     # 顺着链接跟（文本可能来自中转节点）
+                if t and t not in negative and t not in positive:
+                    positive.append(t)
                     break
     # 兜底 2：种子可能不在采样节点上（rgthree 的 Seed / SetSubseeds 这类独立种子节点）
     if "seed" not in sampler:

@@ -113,6 +113,61 @@ def test_lora_tag_loader_text_not_taken_as_prompt():
     print("  ✓ LoRA 标签加载器的 text 不会被当成提示词")
 
 
+def test_impact_wildcard_encode_positive():
+    """IMPACT 的 ImpactWildcardEncode：文本在 populated_text / wildcard_text 里，以前这两个键名不认 → 正向空。"""
+    r = g({
+        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "xl.safetensors"}},
+        "10": {"class_type": "ImpactWildcardEncode", "inputs": {
+            "model": ["1", 0], "clip": ["1", 1], "mode": "populate", "seed": 1,
+            "wildcard_text": "1girl, {red|blue} hair, __style__",
+            "populated_text": "1girl, red hair, marble studio, masterpiece"}},
+        "3": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 1], "text": "bad quality, worst quality"}},
+        "4": {"class_type": "KSampler", "inputs": {
+            "model": ["10", 0], "positive": ["10", 0], "negative": ["3", 0], "latent_image": ["5", 0],
+            "seed": 1, "steps": 20, "cfg": 7.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}},
+        "5": {"class_type": "EmptyLatentImage", "inputs": {"width": 512, "height": 768, "batch_size": 1}},
+    })
+    assert r["positive"] == "1girl, red hair, marble studio, masterpiece", r["positive"]
+    assert r["negative"] == "bad quality, worst quality", r["negative"]
+    print("  ✓ ImpactWildcardEncode：读 populated_text（不再只说「没有正向提示词」）")
+
+
+def test_impact_wildcard_encode_empty_populated_falls_back():
+    r = g({
+        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "xl.safetensors"}},
+        "10": {"class_type": "ImpactWildcardEncode", "inputs": {
+            "model": ["1", 0], "clip": ["1", 1], "populated_text": "", "wildcard_text": "castle, sunset"}},
+        "4": {"class_type": "KSampler", "inputs": {
+            "model": ["10", 0], "positive": ["10", 0], "negative": ["10", 0], "latent_image": ["5", 0],
+            "seed": 1, "steps": 20, "cfg": 7.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}},
+        "5": {"class_type": "EmptyLatentImage", "inputs": {"width": 512, "height": 512, "batch_size": 1}},
+    })
+    assert r["positive"] == "castle, sunset", r["positive"]
+    print("  ✓ populated_text 为空时退回 wildcard_text")
+
+
+def test_text_through_showanything_and_switch():
+    """正向走 ConditioningZeroOut + 文本经 easy showAnything / Any Switch 转进来（Krea2 改图工作流那种接法）。"""
+    r = g({
+        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "Krea2-turbo.safetensors"}},
+        "2": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 1], "text": ["30", 0]}},
+        "3": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 1], "text": "bad quality, blurry"}},
+        "30": {"class_type": "easy showAnything", "inputs": {"anything": ["31", 0]}},
+        "31": {"class_type": "String Literal", "inputs": {"string": "a marble statue, cinematic light"}},
+        "4": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["2", 0]}},
+        "5": {"class_type": "KSampler", "inputs": {
+            "model": ["1", 0], "positive": ["4", 0], "negative": ["3", 0], "latent_image": ["6", 0],
+            "seed": 389183363332409, "steps": 8, "cfg": 1.0, "sampler_name": "euler",
+            "scheduler": "simple", "denoise": 1.0}},
+        "6": {"class_type": "EmptyLatentImage", "inputs": {"width": 2560, "height": 1080, "batch_size": 1}},
+        "88": {"class_type": "Any Switch (rgthree)", "inputs": {"any_1": ["31", 0], "any_2": ["2", 0]}},
+    })
+    assert "marble statue" in r["positive"], r["positive"]
+    assert r["negative"] == "bad quality, blurry", r["negative"]
+    assert r["sampler"]["steps"] == 8 and r["sampler"]["cfg"] == 1.0
+    print("  ✓ 文本经 easy showAnything / String Literal 转进来也能读到")
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     print("跑 %d 个解析回归用例：" % len(tests))
